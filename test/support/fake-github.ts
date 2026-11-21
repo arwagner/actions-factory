@@ -4,7 +4,9 @@ import type { GitHubApi, Label } from "../../src/router/github.js";
 export class FakeGitHub {
   labels: Label[] = [];
   permissions: Record<string, string> = {};
-  comments: Record<number, Array<{ id: number; body: string }>> = {};
+  comments: Record<number, Array<{ id: number; body: string; author?: string }>> = {};
+  issues: Record<number, { title: string; body: string }> = {};
+  search: Array<{ number: number; title: string; body: string }> = [];
   pulls: Record<number, { head: string; mergeable: boolean }> = {};
   writes: Array<{ token: string; call: string; args: unknown }> = [];
   private nextId = 1000;
@@ -32,7 +34,10 @@ export class FakeGitHub {
       addLabels: async (number, names) => {
         record("addLabels", { number, names });
       },
-      listComments: async (number) => structuredClone(this.comments[number] ?? []),
+      listComments: async (number) =>
+        structuredClone(this.comments[number] ?? []).map((c) => ({ ...c, author: c.author ?? "factory-bot" })),
+      getIssue: async (number) => ({ ...(this.issues[number] ?? { title: "", body: "" }), isPullRequest: false }),
+      searchIssues: async () => structuredClone(this.search),
       updateComment: async (id, body) => {
         record("updateComment", { id, body });
         for (const list of Object.values(this.comments)) for (const c of list) if (c.id === id) c.body = body;

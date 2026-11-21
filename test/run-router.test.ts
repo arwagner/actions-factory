@@ -56,6 +56,15 @@ describe("runRouter", () => {
     expect(decision).toMatchObject({ kind: "run", task: "implement" });
     expect(JSON.parse(outputs.decision)).toMatchObject({ kind: "run", task: "implement", subject: { kind: "issue", number: 42 } });
     expect(outputs.task).toBe("implement");
+    expect(JSON.parse(outputs["agent-job"])).toEqual({
+      agent: "claude",
+      runsOn: "ubuntu-latest",
+      container: "",
+      timeout: 60,
+      stepTimeout: 65,
+      turns: 1,
+      jobTimeout: 90,
+    });
     expect(gh.calls("updateLabel").map((w) => w.args)).toEqual([
       { name: "needs-a-human", color: "d93f0b", description: "Waits on a person" },
     ]);
@@ -107,5 +116,16 @@ describe("runRouter", () => {
 
     expect(gh.writes).toEqual([]);
     expect(summary.join("\n")).toContain("nothing to do");
+  });
+
+  it("explains a label write the token isn't allowed to make", async () => {
+    const api = (token: string) => ({
+      ...gh.api(token),
+      createLabel: async () => {
+        throw new Error("GitHub POST /labels failed: 404");
+      },
+    });
+
+    await expect(runRouter(io({ api }))).rejects.toThrow(/FACTORY_TOKEN .* can't write this repo/);
   });
 });

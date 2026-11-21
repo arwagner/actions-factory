@@ -17,3 +17,7 @@ export { applyRun, type ApplyIO, type ApplyResult, type ApplyTask } from "./runn
 export { bundledWork, WORK_REF } from "./runner/bundle.js";
 export { HANDOFF_ARTIFACT, type HandoffMeta } from "./runner/handoff.js";
 export { planJsonSchema, validatePlan, type PlanContext, type PlanError, type PlanTask } from "./runner/plan.js";
+export { ADAPTERS, type Adapter, type AdapterInput, type AdapterOutput } from "./agents/index.js";
+export { handoff, prepare, runChecks, runTurn, type AgentJobIO, type AgentTask } from "./runner/agent-job.js";
+export { maskCommands, parseDotenv, scrub } from "./runner/check-env.js";
+export { buildPrompt, type PromptInput, type PromptItem } from "./runner/prompt.js";

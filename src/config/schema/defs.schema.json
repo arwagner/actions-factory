@@ -12,9 +12,10 @@
       "enum": [
         "claude",
         "codex",
-        "copilot"
+        "copilot",
+        "fake"
       ],
-      "description": "Which agent CLI runs the task."
+      "description": "Which agent CLI runs the task. (`fake` is for the factory's own tests.)"
     },
     "model": {
       "type": "string",
@@ -250,7 +251,8 @@
           "type": "integer",
           "minimum": 1,
           "default": 1,
-          "description": "Rounds of agent then checks."
+          "description": "Rounds of agent then checks.",
+          "maximum": 5
         },
         "writes": {
           "$ref": "#/$defs/writes",
