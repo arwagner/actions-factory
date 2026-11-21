@@ -32,6 +32,8 @@ export interface Adapter {
   /** The secrets this adapter reads, by name. The agent step gets only these. */
   credentials: string[];
   run(input: AdapterInput): Promise<AdapterOutput>;
+  /** Installs the pinned CLI into the agent cache, for the tick's cache-warming job. Absent when there's no CLI. */
+  install?(): Promise<void>;
   /** The doctor's check that the credential works: one tiny prompt. `detail` never holds a secret. */
   ping(): Promise<{ ok: boolean; detail: string }>;
 }

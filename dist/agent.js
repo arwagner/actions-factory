@@ -14947,6 +14947,9 @@ function claudeAdapter(options = {}) {
   return {
     name: "claude",
     credentials: CREDENTIALS,
+    async install() {
+      await install();
+    },
     async ping() {
       const env = agentEnv();
       const secrets = CREDENTIALS.map((name) => process.env[name]).filter((v) => Boolean(v));
@@ -15029,6 +15032,9 @@ function codexAdapter(options = {}) {
   return {
     name: "codex",
     credentials: CREDENTIALS2,
+    async install() {
+      await install();
+    },
     async run(input) {
       const binary = await install();
       const { home, env, secrets } = await session(binary);
@@ -15108,6 +15114,9 @@ function copilotAdapter(options = {}) {
   return {
     name: "copilot",
     credentials: CREDENTIALS3,
+    async install() {
+      await install();
+    },
     async run(input) {
       const binary = await install();
       const home = mkdtempSync3(join4(process.env.RUNNER_TEMP ?? tmpdir3(), "factory-copilot-"));
@@ -16653,6 +16662,10 @@ async function main() {
     return value;
   };
   const [step, n] = process.argv.slice(2);
+  if (step === "install") {
+    await ADAPTERS[required("AGENT")]?.install?.();
+    return;
+  }
   if (step === "doctor") {
     const ok = await doctorAgent({
       agent: required("AGENT"),

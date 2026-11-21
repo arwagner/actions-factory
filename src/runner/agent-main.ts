@@ -18,6 +18,11 @@ async function main(): Promise<void> {
     return value;
   };
   const [step, n] = process.argv.slice(2);
+  if (step === "install") {
+    // The tick's cache-warming job: install the pinned CLI, which that job then saves to the cache.
+    await ADAPTERS[required("AGENT")]?.install?.();
+    return;
+  }
   if (step === "doctor") {
     const ok = await doctorAgent({
       agent: required("AGENT"),

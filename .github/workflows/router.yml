@@ -40,6 +40,7 @@ jobs:
       head-sha: ${{ steps.route.outputs.head-sha }}
       base-ref: ${{ steps.route.outputs.base-ref }}
       doctor-agents: ${{ steps.route.outputs.doctor-agents }}
+      warm-agents: ${{ steps.route.outputs.warm-agents }}
       factory-repository: ${{ steps.factory.outputs.repository }}
       factory-sha: ${{ steps.factory.outputs.sha }}
     steps:
@@ -81,6 +82,57 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: node "$FACTORY_ROOT/dist/router.js"
 
+  # On the tick only: installs each configured agent's pinned CLI on a cache miss and saves it. Scheduled runs
+  # may write the cache; label-triggered ones get a read-only cache (GitHub, 2026-06). The jobs that run agents
+  # only restore: a save there would come after agent-written code ran, which could plant a tampered CLI.
+  warm-agents:
+    needs: route
+    if: needs.route.outputs.warm-agents != '' && needs.route.outputs.warm-agents != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.route.outputs.warm-agents) }}
+    env:
+      AGENT: ${{ matrix.agent }}
+    steps:
+      - name: Look for the cached CLI
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.factory-agents
+          key: factory-agent-${{ matrix.agent }}-${{ matrix.cliVersion }}-${{ runner.os }}-${{ runner.arch }}
+          lookup-only: true
+
+      - name: Fetch the factory at the pinned commit
+        if: steps.cache.outputs.cache-hit != 'true'
+        env:
+          REPOSITORY: ${{ needs.route.outputs.factory-repository }}
+          SHA: ${{ needs.route.outputs.factory-sha }}
+          SERVER: ${{ github.server_url }}
+        run: |
+          dir="$RUNNER_TEMP/actions-factory"
+          git init -q "$dir"
+          git -C "$dir" fetch -q --depth 1 "$SERVER/$REPOSITORY" "$SHA"
+          git -C "$dir" -c advice.detachedHead=false checkout -q FETCH_HEAD
+          echo "FACTORY_ROOT=$dir" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-node@v5
+        if: steps.cache.outputs.cache-hit != 'true'
+        with:
+          node-version: 24
+
+      - name: Install the CLI
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: node "$FACTORY_ROOT/dist/agent.js" install
+
+      - name: Save it
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.factory-agents
+          key: factory-agent-${{ matrix.agent }}-${{ matrix.cliVersion }}-${{ runner.os }}-${{ runner.arch }}
+
   # The doctor's agent check, one job per agent the config uses. Each holds only its own agent's credentials, and
   # no GitHub token. Runs even when the route job's checks failed, so every problem shows in one go.
   doctor-agent:
@@ -112,7 +164,7 @@ jobs:
 
       - name: Cache the agent CLI
         if: matrix.cliVersion != 'none'
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: ~/.factory-agents
           key: factory-agent-${{ matrix.agent }}-${{ matrix.cliVersion }}-${{ runner.os }}-${{ runner.arch }}
@@ -190,7 +242,7 @@ jobs:
 
       - name: Cache the agent CLI
         if: fromJSON(needs.route.outputs.agent-job).cliVersion != 'none'
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: ~/.factory-agents
           key: factory-agent-${{ env.AGENT }}-${{ fromJSON(needs.route.outputs.agent-job).cliVersion }}-${{ runner.os }}-${{ runner.arch }}
