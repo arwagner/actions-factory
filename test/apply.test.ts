@@ -127,6 +127,25 @@ describe("applyRun", () => {
       expect(statusBody(7)).toContain("ana/feature");
     });
 
+    it("waits for the head's checks before merging", async () => {
+      const merge = { ...implement, label: "agent:merge", subject: "pr", writes: { ...writes, merge: true } };
+      gh.pullSequence[7] = [
+        { head: "agent/x", mergeable: false, pending: true },
+        { head: "agent/x", mergeable: false, pending: true },
+        { head: "agent/x", mergeable: true, pending: false },
+      ];
+      gh.pulls[7] = { head: "agent/x", mergeable: true };
+      let slept = 0;
+
+      const result = await applyRun(
+        io({ task: merge, subject: pr, git: { changedFiles: async () => [], push: async () => {} }, plan: { outcome: "done", merge: true }, sleep: async () => { slept++; } }),
+      );
+
+      expect(result.ok).toBe(true);
+      expect(slept).toBe(2);
+      expect(gh.calls("mergePull")).toHaveLength(1);
+    });
+
     it("merges with a merge commit when GitHub can merge it, and parks it when not", async () => {
       const merge = { ...implement, label: "agent:merge", subject: "pr", writes: { ...writes, merge: true } };
       const noChanges = { changedFiles: async () => [], push: async () => {} };

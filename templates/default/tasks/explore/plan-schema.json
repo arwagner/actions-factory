@@ -1,0 +1,6 @@
+{
+  "type": "object",
+  "properties": {
+    "duplicate_of": { "type": "integer", "description": "For a duplicate: the OLDEST issue it duplicates, which survives." }
+  }
+}

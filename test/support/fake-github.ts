@@ -8,7 +8,9 @@ export class FakeGitHub {
   issues: Record<number, { title: string; body: string }> = {};
   search: Array<{ number: number; title: string; body: string }> = [];
   runs: Array<{ id: number; title: string; conclusion: string | null }> = [];
-  pulls: Record<number, { head: string; mergeable: boolean }> = {};
+  pulls: Record<number, { head: string; mergeable: boolean; pending?: boolean }> = {};
+  /** Successive getPull answers for a PR, consumed in order, then `pulls` takes over. */
+  pullSequence: Record<number, Array<{ head: string; mergeable: boolean; pending: boolean }>> = {};
   writes: Array<{ token: string; call: string; args: unknown }> = [];
   private nextId = 1000;
 
@@ -51,7 +53,15 @@ export class FakeGitHub {
         return this.nextId++;
       },
       defaultBranch: async () => "main",
-      getPull: async (number) => this.pulls[number] ?? { head: "feature", mergeable: false },
+      getPull: async (number) => {
+        const next = this.pullSequence[number]?.shift();
+        if (next) {
+          this.pulls[number] = next;
+          return next;
+        }
+        const pull = this.pulls[number] ?? { head: "feature", mergeable: false };
+        return { pending: false, ...pull };
+      },
       createPull: async (pull) => {
         record("createPull", pull);
         return 77;
