@@ -1,0 +1,14 @@
+{
+  "type": "object",
+  "properties": {
+    "ticket": {
+      "type": "integer",
+      "description": "With the outcome built: the ticket this run built. The factory closes it."
+    },
+    "dependsOn": {
+      "type": "array",
+      "description": "With the outcome split: one list per entry of createIssues, in the same order, of the indexes (from 0) of earlier tickets it can't start before.",
+      "items": { "type": "array", "items": { "type": "integer", "minimum": 0 } }
+    }
+  }
+}

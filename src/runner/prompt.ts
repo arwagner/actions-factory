@@ -18,6 +18,8 @@ export interface PromptInput {
   checks?: string[];
   planFile: string;
   planSchemaFile: string;
+  /** What the task's `before` hook wrote to `context.md`, if anything. */
+  context?: string;
   /** For a later round: the failing checks' output, scrubbed. */
   checkFailure?: string;
 }
@@ -31,6 +33,7 @@ const STATUS_MARKER = "<!-- factory:status";
 export function buildPrompt(input: PromptInput): string {
   const parts = [input.prompt.trim()];
   if (input.instructions) parts.push(input.instructions.trim());
+  if (input.context?.trim()) parts.push(["## Context from the template", "", input.context.trim()].join("\n"));
   if (input.items.length > 0) {
     parts.push(
       [

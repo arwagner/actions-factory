@@ -4,6 +4,8 @@ import { type PlanContext, type PlanTask, validatePlan } from "./plan.js";
 
 export interface ApplyTask extends PlanTask {
   label?: string;
+  /** `subject`: every run continues one branch per issue (§7 implement-spec). */
+  branch?: "run" | "subject";
   allowWorkflowChanges: boolean;
   outcomes: Record<string, { addLabels: string[]; removeLabels: string[]; waitsOnPerson: boolean }>;
   hooks?: { before?: string; after?: string };
@@ -157,17 +159,24 @@ async function applyWrites(io: ApplyIO): Promise<string> {
   let pullNumber: number | undefined;
   if (isMap(plan.pullRequest)) {
     if (!branch) throw new Refusal("the plan asks for a pull request, but the agent changed nothing.");
-    const draft = io.task.writes.pullRequest !== false && io.task.writes.pullRequest.draft;
-    const base = await io.api.defaultBranch();
-    pullNumber = await io.api.createPull({ ...(plan.pullRequest as { title: string; body: string }), head: branch, base, draft });
-    if (io.assignee && !io.prsGetFactoryReview) {
-      await io.api.addAssignees(pullNumber, [io.assignee]);
-      await io.api.requestReviewers(pullNumber, [io.assignee]);
+    // A branch that every run continues already has its PR after the first run: that one is reused.
+    const existing = await io.api.findOpenPull(branch);
+    if (existing !== undefined) {
+      pullNumber = existing;
+    } else {
+      const draft = io.task.writes.pullRequest !== false && io.task.writes.pullRequest.draft;
+      const base = await io.api.defaultBranch();
+      pullNumber = await io.api.createPull({ ...(plan.pullRequest as { title: string; body: string }), head: branch, base, draft });
+      if (io.assignee && !io.prsGetFactoryReview) {
+        await io.api.addAssignees(pullNumber, [io.assignee]);
+        await io.api.requestReviewers(pullNumber, [io.assignee]);
+      }
     }
   }
   if (number !== undefined) await applyItem(io, number, plan);
+  const created: number[] = [];
   for (const issue of (plan.createIssues ?? []) as Array<{ title: string; body: string; labels?: string[] }>) {
-    await io.api.createIssue(issue);
+    created.push(await io.api.createIssue(issue));
   }
   if (plan.merge === true && number !== undefined) await mergeWhenReady(io, number);
 
@@ -176,13 +185,15 @@ async function applyWrites(io: ApplyIO): Promise<string> {
     FACTORY_PLAN: JSON.stringify(plan),
     FACTORY_SUBJECT: number === undefined ? "" : String(number),
     ...(pullNumber === undefined ? {} : { FACTORY_PULL_REQUEST: String(pullNumber) }),
+    // In plan order, so a hook can link them (sub-issues, blocking).
+    FACTORY_CREATED_ISSUES: created.join(" "),
   });
   return plan.outcome as string;
 }
 
 /** The `after` hook runs last, once every write is made. */
 async function runAfterHook(io: ApplyIO, env: Record<string, string>): Promise<void> {
-  if (io.task.hooks?.after) await io.runHook(io.task.hooks.after, { FACTORY_TASK: io.taskName, ...env });
+  if (io.task.hooks?.after) await io.runHook(io.task.hooks.after, { FACTORY_TASK: io.taskName, FACTORY_TASK_LABEL: io.task.label ?? "", ...env });
 }
 
 const MERGE_POLL_MS = 30_000;
@@ -226,7 +237,7 @@ async function branchFor(io: ApplyIO): Promise<string> {
       return head;
     }
     case "issue":
-      return `agent/issue-${io.subject.number}-${io.runId}`;
+      return io.task.branch === "subject" ? `agent/issue-${io.subject.number}` : `agent/issue-${io.subject.number}-${io.runId}`;
     default:
       return `agent/${io.taskName}-${io.runId}`;
   }

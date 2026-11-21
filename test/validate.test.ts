@@ -162,6 +162,14 @@ describe("validateConfig", () => {
       ]);
     });
 
+    it("allows a subject branch only on issue tasks", () => {
+      const result = validateConfig({ schemaVersion: 1, tasks: { review: { ...reviewTask, branch: "subject" } } });
+
+      expect(result.errors).toEqual([
+        { path: "tasks.review.branch", message: "`subject` branches are for issue tasks; a PR task always works on the PR's own branch" },
+      ]);
+    });
+
     it("requires every task to have a label or a schedule", () => {
       const { label: _omit, ...untriggered } = reviewTask;
       const result = validateConfig({ schemaVersion: 1, tasks: { review: untriggered } });

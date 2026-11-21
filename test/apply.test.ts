@@ -209,6 +209,26 @@ describe("applyRun", () => {
     expect(gh.calls("comment").filter((w) => !(w.args as { body: string }).body.includes("factory:status")).map((w) => (w.args as { number: number }).number)).toEqual([1, 2]);
   });
 
+  it("continues one branch per issue for a `branch: subject` task, reusing the PR it already opened", async () => {
+    const task = { ...implement, branch: "subject" as const };
+    gh.openPulls["agent/issue-42"] = 61;
+
+    const result = await applyRun(io({ task }));
+
+    expect(pushed).toEqual(["agent/issue-42"]);
+    expect(gh.calls("createPull")).toEqual([]);
+    expect(result.writes).toContain("pushed `agent/issue-42`");
+  });
+
+  it("tells the after hook which issues it created, in plan order", async () => {
+    const task = { ...implement, writes: { ...implement.writes, createIssues: 2 }, hooks: { after: "/t/hooks/after.sh" } };
+    const plan = { outcome: "done", createIssues: [{ title: "One", body: "" }, { title: "Two", body: "" }] };
+
+    await applyRun(io({ task, plan, git: { changedFiles: async () => [], push: async () => {} } }));
+
+    expect(hooks[0].env.FACTORY_CREATED_ISSUES).toMatch(/^\d+ \d+$/);
+  });
+
   it("updates its status comment in place, and runs the after hook last", async () => {
     gh.comments[42] = [{ id: 5, body: "<!-- factory:status run=9001 -->\nstarted" }];
     const task = { ...implement, hooks: { after: "/t/hooks/after.sh" } };

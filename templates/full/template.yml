@@ -1,0 +1,46 @@
+name: full
+description: Everything in default, plus implement-spec (a spec issue built ticket by ticket) and ratchet (one step of a migration at a time).
+schemaVersions: [1]
+extends: default
+
+tasks:
+  implement-spec:
+    label: agent:implement-spec
+    subject: issue
+    # One branch and one draft pull request for the whole spec; every run continues it.
+    branch: subject
+    prompt: tasks/implement-spec/prompt.md
+    permission: edit-workspace
+    planSchema: tasks/implement-spec/plan-schema.json
+    writes:
+      comment: true
+      push: true
+      pullRequest: { draft: true }
+      createIssues: 20
+    outcomes:
+      split: {}
+      built: {}
+      done: {}
+      needs-a-human: { addLabels: [needs-a-human], waitsOnPerson: true }
+    hooks:
+      # Finds the next unblocked ticket (or says to split, or that none are left) for the prompt.
+      before: hooks/spec-next.sh
+      # Links new tickets as sub-issues with blocking links, closes the built ticket, and starts the next run.
+      after: hooks/spec-after.sh
+
+  ratchet:
+    label: agent:ratchet
+    subject: issue
+    prompt: tasks/ratchet/prompt.md
+    permission: edit-workspace
+    writes:
+      comment: true
+      push: true
+      pullRequest: { draft: true }
+    outcomes:
+      fixed: {}
+      not-fixed: {}
+    hooks:
+      # Picks one random entry from the exception list the tracking issue names.
+      before: hooks/ratchet-pick.sh
+      after: ../default/hooks/label-pr.sh

@@ -4,6 +4,7 @@ import type { ConfigError } from "./validate.js";
 interface Task {
   label?: string;
   subject: string;
+  branch?: string;
   query?: string;
   schedule?: { cron: string; subject?: number };
   writes: { merge: boolean; labels: string[] };
@@ -42,6 +43,9 @@ export function checkHardRules(config: SchemaValidConfig): ConfigError[] {
       if ((task.subject === "issue" || task.subject === "pr") && task.schedule.subject === undefined) {
         errors.push({ path: at("schedule.subject"), message: `a scheduled ${task.subject} task needs the number of the ${task.subject === "pr" ? "pull request" : "issue"} it's about` });
       }
+    }
+    if (task.branch === "subject" && task.subject !== "issue") {
+      errors.push({ path: at("branch"), message: "`subject` branches are for issue tasks; a PR task always works on the PR's own branch" });
     }
     if (task.query !== undefined && task.subject !== "batch") {
       errors.push({ path: at("query"), message: "allowed only with subject: batch" });

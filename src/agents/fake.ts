@@ -5,7 +5,9 @@ import type { Adapter } from "./types.js";
 /**
  * Tests only, undocumented for clients. Plays back a ready-made script from the client checkout,
  * `.factory/fake/<task>.json`: `{ "plan": {...}, "files": { "path": "content" } }`, with no LLM call.
- * A script per turn can be given as `<task>.turn<N>.json`.
+ * A script per turn can be given as `<task>.turn<N>.json`. A script can instead hold `cases`: the first whose
+ * `promptMatch` regex matches the prompt plays, with `$1` in its plan and file names replaced by the first capture
+ * (a plan value that is exactly `"$1"` becomes a number when the capture is one).
  */
 export const fakeAdapter: Adapter = {
   name: "fake",
@@ -21,7 +23,11 @@ export const fakeAdapter: Adapter = {
       writeFileSync(input.transcriptFile, `${JSON.stringify({ type: "error", message: `no fake script at ${file}` })}\n`);
       return { status: "failed" };
     }
-    const script = JSON.parse(readFileSync(file, "utf8")) as { plan: unknown; files?: Record<string, string> };
+    const script = pickCase(JSON.parse(readFileSync(file, "utf8")) as Script, readFileSync(input.promptFile, "utf8"));
+    if (!script) {
+      writeFileSync(input.transcriptFile, `${JSON.stringify({ type: "error", message: `no case in ${file} matches the prompt` })}\n`);
+      return { status: "failed" };
+    }
     for (const [path, content] of Object.entries(script.files ?? {})) {
       if (input.permission === "read-only") break;
       mkdirSync(dirname(join(input.checkout, path)), { recursive: true });
@@ -32,3 +38,28 @@ export const fakeAdapter: Adapter = {
     return { status: "ok", usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 } };
   },
 };
+
+interface Script {
+  plan: unknown;
+  files?: Record<string, string>;
+  cases?: Array<{ promptMatch: string; plan: unknown; files?: Record<string, string> }>;
+}
+
+function pickCase(script: Script, prompt: string): { plan: unknown; files?: Record<string, string> } | undefined {
+  if (!script.cases) return script;
+  for (const c of script.cases) {
+    const match = new RegExp(c.promptMatch).exec(prompt);
+    if (!match) continue;
+    const capture = match[1] ?? "";
+    const fill = (value: unknown): unknown => {
+      if (value === "$1") return /^\d+$/.test(capture) ? Number(capture) : capture;
+      if (typeof value === "string") return value.replaceAll("$1", capture);
+      if (Array.isArray(value)) return value.map(fill);
+      if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, fill(v)]));
+      return value;
+    };
+    const files = c.files ? Object.fromEntries(Object.entries(c.files).map(([k, v]) => [k.replaceAll("$1", capture), v])) : undefined;
+    return { plan: fill(c.plan), files };
+  }
+  return undefined;
+}

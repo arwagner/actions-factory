@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { fakeAdapter } from "../src/agents/fake.js";
@@ -74,7 +74,7 @@ describe("the agent job", () => {
     await handoff(io);
 
     expect(prompt(io)).toContain("Add a widget");
-    expect(hookEnvs).toEqual([{ FACTORY_TASK: "implement", FACTORY_WORK_DIR: io.workDir }]);
+    expect(hookEnvs).toEqual([{ FACTORY_TASK: "implement", FACTORY_WORK_DIR: io.workDir, FACTORY_SUBJECT: "42" }]);
     expect(meta(io)).toEqual({
       agentStatus: "ok",
       checksPassed: true,
@@ -87,6 +87,32 @@ describe("the agent job", () => {
     expect(JSON.parse(readFileSync(join(io.workDir, "handoff/plan.json"), "utf8"))).toEqual({ outcome: "done" });
     const bundle = join(io.workDir, "handoff/work.bundle");
     expect(git(io.checkout, "bundle", "list-heads", bundle)).toContain("refs/heads/factory-work");
+  });
+
+  it("runs the before hook first and puts what it writes to context.md into the prompt", async () => {
+    const io = setup({}, { hooks: { before: "/h/before.sh" } });
+    io.runHook = async (_path, env) => writeFileSync(join(env.FACTORY_WORK_DIR, "context.md"), "Build ticket #7 next.");
+
+    await prepare(io);
+
+    expect(prompt(io)).toContain("## Context from the template\n\nBuild ticket #7 next.");
+  });
+
+  it("plays the fake script case whose regex matches the prompt, filling in the capture", async () => {
+    const cases = {
+      cases: [
+        { promptMatch: "splits it", plan: { outcome: "split" } },
+        { promptMatch: "builds ticket #(\\d+)", plan: { outcome: "built", ticket: "$1" }, files: { "t-$1.txt": "x\n" } },
+      ],
+    };
+    const io = setup({ ".factory/fake/implement.json": JSON.stringify(cases) }, { hooks: { before: "/h/before.sh" } });
+    io.runHook = async (_path, env) => writeFileSync(join(env.FACTORY_WORK_DIR, "context.md"), "This run builds ticket #12 of spec #5.");
+
+    await prepare(io);
+    await runTurn(io, 1);
+
+    expect(JSON.parse(readFileSync(join(io.workDir, "plan.json"), "utf8"))).toEqual({ outcome: "built", ticket: 12 });
+    expect(existsSync(join(io.checkout, "t-12.txt"))).toBe(true);
   });
 
   it("hands over no bundle when the agent changed nothing", async () => {

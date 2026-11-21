@@ -138,6 +138,13 @@ export async function runRouter(io: RouterIO): Promise<Decision> {
       const pull = await reader.pullInfo(decision.subject.number);
       io.setOutput("head-sha", pull.headSha);
       io.setOutput("base-ref", pull.base);
+    } else if (decision.subject.kind === "issue" && taskBranch(loaded.config, decision.task) === "subject") {
+      // A task that continues one branch per issue works on that branch once it exists.
+      const sha = await reader.branchSha(`agent/issue-${decision.subject.number}`);
+      if (sha) {
+        io.setOutput("head-sha", sha);
+        io.setOutput("base-ref", await reader.defaultBranch());
+      }
     }
   }
   return decision;
@@ -306,6 +313,10 @@ function headline(decision: Decision): string {
     case "ignore":
       return `nothing to do: ${decision.reason}`;
   }
+}
+
+function taskBranch(config: Record<string, unknown>, task: string): string | undefined {
+  return (config.tasks as Record<string, { branch?: string }>)[task].branch;
 }
 
 /** What the agent job's own `runs-on`, `container` and `timeout-minutes` need, read with `fromJSON`. */
