@@ -70,7 +70,10 @@ export async function runRouter(io: RouterIO): Promise<Decision> {
 
   io.summary(summaryFor(decision, loaded));
   io.setOutput("decision", JSON.stringify(decision));
-  if (decision.kind === "run") io.setOutput("task", decision.task);
+  if (decision.kind === "run") {
+    io.setOutput("task", decision.task);
+    io.setOutput("agent-job", JSON.stringify(agentJobSettings(loaded.config, decision.task)));
+  }
   return decision;
 }
 
@@ -140,6 +143,24 @@ function headline(decision: Decision): string {
     case "ignore":
       return `nothing to do: ${decision.reason}`;
   }
+}
+
+/** What the agent job's own `runs-on`, `container` and `timeout-minutes` need, read with `fromJSON`. */
+export function agentJobSettings(config: Record<string, unknown>, taskName: string) {
+  const task = (config.tasks as Record<string, Record<string, unknown>>)[taskName];
+  const pick = (key: string) => task[key] ?? config[key];
+  const timeout = task.timeout as number;
+  return {
+    agent: pick("agent") as string,
+    runsOn: pick("runsOn"),
+    container: (pick("container") as string | undefined) ?? "",
+    timeout,
+    // The agent step's backstop; the adapter enforces `timeout` itself.
+    stepTimeout: timeout + 5,
+    turns: task.turns as number,
+    // Setup and checks get a margin on top of the agent's own limit, within the 6 h hosted cap (§8).
+    jobTimeout: Math.min(360, timeout * (task.turns as number) + 30),
+  };
 }
 
 function factoryVersion(factoryRoot: string): string {

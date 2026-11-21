@@ -30,6 +30,7 @@ jobs:
     outputs:
       decision: ${{ steps.route.outputs.decision }}
       task: ${{ steps.route.outputs.task }}
+      agent-job: ${{ steps.route.outputs.agent-job }}
       factory-repository: ${{ steps.factory.outputs.repository }}
       factory-sha: ${{ steps.factory.outputs.sha }}
     steps:
@@ -69,3 +70,184 @@ jobs:
           FACTORY_TOKEN: ${{ secrets.FACTORY_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}
         run: node "$FACTORY_ROOT/dist/router.js"
+
+  # Holds no GitHub token. Only the prepare step reads GitHub, with the default token; each agent round gets
+  # only its own agent's credential, and each checks step only FACTORY_CHECK_ENV (§9).
+  agent:
+    needs: route
+    if: needs.route.outputs.task != ''
+    runs-on: ${{ fromJSON(needs.route.outputs.agent-job).runsOn }}
+    container: ${{ fromJSON(needs.route.outputs.agent-job).container }}
+    timeout-minutes: ${{ fromJSON(needs.route.outputs.agent-job).jobTimeout }}
+    env:
+      AGENT: ${{ fromJSON(needs.route.outputs.agent-job).agent }}
+      DECISION: ${{ needs.route.outputs.decision }}
+    steps:
+      - name: Check out the client repo
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Fetch the factory at the pinned commit
+        env:
+          REPOSITORY: ${{ needs.route.outputs.factory-repository }}
+          SHA: ${{ needs.route.outputs.factory-sha }}
+          SERVER: ${{ github.server_url }}
+        run: |
+          dir="$RUNNER_TEMP/actions-factory"
+          git init -q "$dir"
+          git -C "$dir" fetch -q --depth 1 "$SERVER/$REPOSITORY" "$SHA"
+          git -C "$dir" -c advice.detachedHead=false checkout -q FETCH_HEAD
+          echo "FACTORY_ROOT=$dir" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: Client setup
+        if: hashFiles('.factory/setup/action.yml') != ''
+        uses: ./.factory/setup
+
+      - name: Prepare
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node "$FACTORY_ROOT/dist/agent.js" prepare
+
+      - name: Agent, round 1
+        if: always() && fromJSON(needs.route.outputs.agent-job).turns >= 1
+        timeout-minutes: ${{ fromJSON(needs.route.outputs.agent-job).stepTimeout }}
+        env:
+          ANTHROPIC_API_KEY: ${{ env.AGENT == 'claude' && secrets.ANTHROPIC_API_KEY || '' }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ env.AGENT == 'claude' && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
+          OPENAI_API_KEY: ${{ env.AGENT == 'codex' && secrets.OPENAI_API_KEY || '' }}
+          CODEX_ACCESS_TOKEN: ${{ env.AGENT == 'codex' && secrets.CODEX_ACCESS_TOKEN || '' }}
+          COPILOT_GITHUB_TOKEN: ${{ env.AGENT == 'copilot' && secrets.COPILOT_GITHUB_TOKEN || '' }}
+        run: node "$FACTORY_ROOT/dist/agent.js" turn 1
+
+      - name: Checks, round 1
+        if: always() && fromJSON(needs.route.outputs.agent-job).turns >= 1
+        env:
+          FACTORY_CHECK_ENV: ${{ secrets.FACTORY_CHECK_ENV }}
+        run: node "$FACTORY_ROOT/dist/agent.js" checks 1
+
+      - name: Agent, round 2
+        if: always() && fromJSON(needs.route.outputs.agent-job).turns >= 2
+        timeout-minutes: ${{ fromJSON(needs.route.outputs.agent-job).stepTimeout }}
+        env:
+          ANTHROPIC_API_KEY: ${{ env.AGENT == 'claude' && secrets.ANTHROPIC_API_KEY || '' }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ env.AGENT == 'claude' && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
+          OPENAI_API_KEY: ${{ env.AGENT == 'codex' && secrets.OPENAI_API_KEY || '' }}
+          CODEX_ACCESS_TOKEN: ${{ env.AGENT == 'codex' && secrets.CODEX_ACCESS_TOKEN || '' }}
+          COPILOT_GITHUB_TOKEN: ${{ env.AGENT == 'copilot' && secrets.COPILOT_GITHUB_TOKEN || '' }}
+        run: node "$FACTORY_ROOT/dist/agent.js" turn 2
+
+      - name: Checks, round 2
+        if: always() && fromJSON(needs.route.outputs.agent-job).turns >= 2
+        env:
+          FACTORY_CHECK_ENV: ${{ secrets.FACTORY_CHECK_ENV }}
+        run: node "$FACTORY_ROOT/dist/agent.js" checks 2
+
+      - name: Agent, round 3
+        if: always() && fromJSON(needs.route.outputs.agent-job).turns >= 3
+        timeout-minutes: ${{ fromJSON(needs.route.outputs.agent-job).stepTimeout }}
+        env:
+          ANTHROPIC_API_KEY: ${{ env.AGENT == 'claude' && secrets.ANTHROPIC_API_KEY || '' }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ env.AGENT == 'claude' && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
+          OPENAI_API_KEY: ${{ env.AGENT == 'codex' && secrets.OPENAI_API_KEY || '' }}
+          CODEX_ACCESS_TOKEN: ${{ env.AGENT == 'codex' && secrets.CODEX_ACCESS_TOKEN || '' }}
+          COPILOT_GITHUB_TOKEN: ${{ env.AGENT == 'copilot' && secrets.COPILOT_GITHUB_TOKEN || '' }}
+        run: node "$FACTORY_ROOT/dist/agent.js" turn 3
+
+      - name: Checks, round 3
+        if: always() && fromJSON(needs.route.outputs.agent-job).turns >= 3
+        env:
+          FACTORY_CHECK_ENV: ${{ secrets.FACTORY_CHECK_ENV }}
+        run: node "$FACTORY_ROOT/dist/agent.js" checks 3
+
+      - name: Agent, round 4
+        if: always() && fromJSON(needs.route.outputs.agent-job).turns >= 4
+        timeout-minutes: ${{ fromJSON(needs.route.outputs.agent-job).stepTimeout }}
+        env:
+          ANTHROPIC_API_KEY: ${{ env.AGENT == 'claude' && secrets.ANTHROPIC_API_KEY || '' }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ env.AGENT == 'claude' && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
+          OPENAI_API_KEY: ${{ env.AGENT == 'codex' && secrets.OPENAI_API_KEY || '' }}
+          CODEX_ACCESS_TOKEN: ${{ env.AGENT == 'codex' && secrets.CODEX_ACCESS_TOKEN || '' }}
+          COPILOT_GITHUB_TOKEN: ${{ env.AGENT == 'copilot' && secrets.COPILOT_GITHUB_TOKEN || '' }}
+        run: node "$FACTORY_ROOT/dist/agent.js" turn 4
+
+      - name: Checks, round 4
+        if: always() && fromJSON(needs.route.outputs.agent-job).turns >= 4
+        env:
+          FACTORY_CHECK_ENV: ${{ secrets.FACTORY_CHECK_ENV }}
+        run: node "$FACTORY_ROOT/dist/agent.js" checks 4
+
+      - name: Agent, round 5
+        if: always() && fromJSON(needs.route.outputs.agent-job).turns >= 5
+        timeout-minutes: ${{ fromJSON(needs.route.outputs.agent-job).stepTimeout }}
+        env:
+          ANTHROPIC_API_KEY: ${{ env.AGENT == 'claude' && secrets.ANTHROPIC_API_KEY || '' }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ env.AGENT == 'claude' && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
+          OPENAI_API_KEY: ${{ env.AGENT == 'codex' && secrets.OPENAI_API_KEY || '' }}
+          CODEX_ACCESS_TOKEN: ${{ env.AGENT == 'codex' && secrets.CODEX_ACCESS_TOKEN || '' }}
+          COPILOT_GITHUB_TOKEN: ${{ env.AGENT == 'copilot' && secrets.COPILOT_GITHUB_TOKEN || '' }}
+        run: node "$FACTORY_ROOT/dist/agent.js" turn 5
+
+      - name: Checks, round 5
+        if: always() && fromJSON(needs.route.outputs.agent-job).turns >= 5
+        env:
+          FACTORY_CHECK_ENV: ${{ secrets.FACTORY_CHECK_ENV }}
+        run: node "$FACTORY_ROOT/dist/agent.js" checks 5
+
+      - name: Hand over to the apply job
+        if: always()
+        run: node "$FACTORY_ROOT/dist/agent.js" handoff
+
+      - name: Upload the handoff
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: factory-handoff
+          path: ${{ runner.temp }}/factory/handoff
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # Runs even when the agent job failed, so the item is parked with agent:blocked and a status comment.
+  apply:
+    needs: [route, agent]
+    if: always() && needs.route.outputs.task != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the client repo
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Fetch the factory at the pinned commit
+        env:
+          REPOSITORY: ${{ needs.route.outputs.factory-repository }}
+          SHA: ${{ needs.route.outputs.factory-sha }}
+          SERVER: ${{ github.server_url }}
+        run: |
+          dir="$RUNNER_TEMP/actions-factory"
+          git init -q "$dir"
+          git -C "$dir" fetch -q --depth 1 "$SERVER/$REPOSITORY" "$SHA"
+          git -C "$dir" -c advice.detachedHead=false checkout -q FETCH_HEAD
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: Download the handoff
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: factory-handoff
+          path: ${{ runner.temp }}/handoff
+
+      - name: Apply
+        env:
+          DECISION: ${{ needs.route.outputs.decision }}
+          FACTORY_ROOT: ${{ runner.temp }}/actions-factory
+          HANDOFF_DIR: ${{ runner.temp }}/handoff
+          FACTORY_TOKEN: ${{ secrets.FACTORY_TOKEN }}
+        run: node "$FACTORY_ROOT/dist/apply.js"

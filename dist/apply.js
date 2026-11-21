@@ -14907,9 +14907,10 @@ var defs_schema_default = {
       enum: [
         "claude",
         "codex",
-        "copilot"
+        "copilot",
+        "fake"
       ],
-      description: "Which agent CLI runs the task."
+      description: "Which agent CLI runs the task. (`fake` is for the factory's own tests.)"
     },
     model: {
       type: "string",
@@ -15145,7 +15146,8 @@ var defs_schema_default = {
           type: "integer",
           minimum: 1,
           default: 1,
-          description: "Rounds of agent then checks."
+          description: "Rounds of agent then checks.",
+          maximum: 5
         },
         writes: {
           $ref: "#/$defs/writes",
@@ -15666,9 +15668,20 @@ function gitHubApi(token, owner, repo, baseUrl = "https://api.github.com") {
       const comments = [];
       for (let page = 1; ; page++) {
         const batch = await call("GET", `/issues/${issueNumber}/comments?per_page=100&page=${page}`);
-        comments.push(...batch.map(({ id, body }) => ({ id, body })));
+        comments.push(...batch.map(({ id, body, user }) => ({ id, body, author: user?.login ?? "ghost" })));
         if (batch.length < 100) return comments;
       }
+    },
+    async getIssue(issueNumber) {
+      const issue = await call("GET", `/issues/${issueNumber}`);
+      return { title: issue.title, body: issue.body ?? "", isPullRequest: issue.pull_request !== void 0 };
+    },
+    async searchIssues(query) {
+      const q = encodeURIComponent(`repo:${owner}/${repo} is:issue is:open ${query}`);
+      const result = await fetch(`${baseUrl}/search/issues?q=${q}&sort=created&order=asc&per_page=100`, {
+        headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "User-Agent": "actions-factory" }
+      }).then((r) => r.json());
+      return result.items.map(({ number, title, body }) => ({ number, title, body: body ?? "" }));
     },
     async updateComment(commentId, body) {
       await call("PATCH", `/issues/comments/${commentId}`, { body });

@@ -15,7 +15,10 @@ export interface GitHubApi {
   removeLabel(issueNumber: number, name: string): Promise<void>;
   comment(issueNumber: number, body: string): Promise<void>;
   addLabels(issueNumber: number, names: string[]): Promise<void>;
-  listComments(issueNumber: number): Promise<Array<{ id: number; body: string }>>;
+  listComments(issueNumber: number): Promise<Array<{ id: number; body: string; author: string }>>;
+  getIssue(issueNumber: number): Promise<{ title: string; body: string; isPullRequest: boolean }>;
+  /** Open issues matching a search query in this repo, oldest first. */
+  searchIssues(query: string): Promise<Array<{ number: number; title: string; body: string }>>;
   updateComment(commentId: number, body: string): Promise<void>;
   closeIssue(issueNumber: number): Promise<void>;
   createIssue(issue: { title: string; body: string; labels?: string[] }): Promise<number>;
@@ -77,15 +80,27 @@ export function gitHubApi(token: string, owner: string, repo: string, baseUrl = 
       if (names.length > 0) await call("POST", `/issues/${issueNumber}/labels`, { labels: names });
     },
     async listComments(issueNumber) {
-      const comments: Array<{ id: number; body: string }> = [];
+      const comments: Array<{ id: number; body: string; author: string }> = [];
       for (let page = 1; ; page++) {
         const batch = (await call("GET", `/issues/${issueNumber}/comments?per_page=100&page=${page}`)) as Array<{
           id: number;
           body: string;
+          user: { login: string } | null;
         }>;
-        comments.push(...batch.map(({ id, body }) => ({ id, body })));
+        comments.push(...batch.map(({ id, body, user }) => ({ id, body, author: user?.login ?? "ghost" })));
         if (batch.length < 100) return comments;
       }
+    },
+    async getIssue(issueNumber) {
+      const issue = (await call("GET", `/issues/${issueNumber}`)) as { title: string; body: string | null; pull_request?: unknown };
+      return { title: issue.title, body: issue.body ?? "", isPullRequest: issue.pull_request !== undefined };
+    },
+    async searchIssues(query) {
+      const q = encodeURIComponent(`repo:${owner}/${repo} is:issue is:open ${query}`);
+      const result = (await fetch(`${baseUrl}/search/issues?q=${q}&sort=created&order=asc&per_page=100`, {
+        headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "User-Agent": "actions-factory" },
+      }).then((r) => r.json())) as { items: Array<{ number: number; title: string; body: string | null }> };
+      return result.items.map(({ number, title, body }) => ({ number, title, body: body ?? "" }));
     },
     async updateComment(commentId, body) {
       await call("PATCH", `/issues/comments/${commentId}`, { body });

@@ -56,6 +56,15 @@ describe("runRouter", () => {
     expect(decision).toMatchObject({ kind: "run", task: "implement" });
     expect(JSON.parse(outputs.decision)).toMatchObject({ kind: "run", task: "implement", subject: { kind: "issue", number: 42 } });
     expect(outputs.task).toBe("implement");
+    expect(JSON.parse(outputs["agent-job"])).toEqual({
+      agent: "claude",
+      runsOn: "ubuntu-latest",
+      container: "",
+      timeout: 60,
+      stepTimeout: 65,
+      turns: 1,
+      jobTimeout: 90,
+    });
     expect(gh.calls("updateLabel").map((w) => w.args)).toEqual([
       { name: "needs-a-human", color: "d93f0b", description: "Waits on a person" },
     ]);

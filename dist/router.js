@@ -14901,9 +14901,20 @@ function gitHubApi(token, owner, repo, baseUrl = "https://api.github.com") {
       const comments = [];
       for (let page = 1; ; page++) {
         const batch = await call("GET", `/issues/${issueNumber}/comments?per_page=100&page=${page}`);
-        comments.push(...batch.map(({ id, body }) => ({ id, body })));
+        comments.push(...batch.map(({ id, body, user }) => ({ id, body, author: user?.login ?? "ghost" })));
         if (batch.length < 100) return comments;
       }
+    },
+    async getIssue(issueNumber) {
+      const issue = await call("GET", `/issues/${issueNumber}`);
+      return { title: issue.title, body: issue.body ?? "", isPullRequest: issue.pull_request !== void 0 };
+    },
+    async searchIssues(query) {
+      const q = encodeURIComponent(`repo:${owner}/${repo} is:issue is:open ${query}`);
+      const result = await fetch(`${baseUrl}/search/issues?q=${q}&sort=created&order=asc&per_page=100`, {
+        headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "User-Agent": "actions-factory" }
+      }).then((r) => r.json());
+      return result.items.map(({ number, title, body }) => ({ number, title, body: body ?? "" }));
     },
     async updateComment(commentId, body) {
       await call("PATCH", `/issues/comments/${commentId}`, { body });
@@ -14991,9 +15002,10 @@ var defs_schema_default = {
       enum: [
         "claude",
         "codex",
-        "copilot"
+        "copilot",
+        "fake"
       ],
-      description: "Which agent CLI runs the task."
+      description: "Which agent CLI runs the task. (`fake` is for the factory's own tests.)"
     },
     model: {
       type: "string",
@@ -15229,7 +15241,8 @@ var defs_schema_default = {
           type: "integer",
           minimum: 1,
           default: 1,
-          description: "Rounds of agent then checks."
+          description: "Rounds of agent then checks.",
+          maximum: 5
         },
         writes: {
           $ref: "#/$defs/writes",
@@ -15901,7 +15914,10 @@ async function runRouter(io) {
   }
   io.summary(summaryFor(decision, loaded));
   io.setOutput("decision", JSON.stringify(decision));
-  if (decision.kind === "run") io.setOutput("task", decision.task);
+  if (decision.kind === "run") {
+    io.setOutput("task", decision.task);
+    io.setOutput("agent-job", JSON.stringify(agentJobSettings(loaded.config, decision.task)));
+  }
   return decision;
 }
 async function postRefusal(decision, ctx) {
@@ -15957,6 +15973,22 @@ function headline(decision) {
     case "ignore":
       return `nothing to do: ${decision.reason}`;
   }
+}
+function agentJobSettings(config, taskName) {
+  const task = config.tasks[taskName];
+  const pick = (key) => task[key] ?? config[key];
+  const timeout = task.timeout;
+  return {
+    agent: pick("agent"),
+    runsOn: pick("runsOn"),
+    container: pick("container") ?? "",
+    timeout,
+    // The agent step's backstop; the adapter enforces `timeout` itself.
+    stepTimeout: timeout + 5,
+    turns: task.turns,
+    // Setup and checks get a margin on top of the agent's own limit, within the 6 h hosted cap (§8).
+    jobTimeout: Math.min(360, timeout * task.turns + 30)
+  };
 }
 function factoryVersion(factoryRoot) {
   try {

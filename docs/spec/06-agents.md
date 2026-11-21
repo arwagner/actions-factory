@@ -4,13 +4,14 @@ Decided in: Agent CLIs research (#4), The agent seam (#12).
 
 ## The adapter contract
 
-An adapter is a composite action in this repo at `agents/<name>/`. Adapters live only in this repo: a new agent ships as a factory release with a new stub version, because the stub has to name the new secret.
+An adapter is a Node module in this repo at `src/agents/<name>.ts`, run by the agent job's one generic agent step. Composite actions don't work here: `uses:` can't name an adapter by expression, and a local action would have to sit inside the checkout the agent can edit (#54). The step gets only the chosen adapter's credentials. Adapters live only in this repo: a new agent ships as a factory release with a new stub version, because the stub has to name the new secret.
 
 **Inputs:**
 - checkout path;
 - prompt file (the template prompt plus every layer's `instructions`);
 - the task's skills;
 - the plan's JSON schema;
+- the turn number (later turns follow failed checks; the prompt then includes their scrubbed output);
 - permission profile (`read-only` or `edit-workspace`);
 - model;
 - time and budget limits.

@@ -95,7 +95,7 @@ describe("validateConfig", () => {
     const result = validateConfig({ schemaVersion: 1, agent: "gemini", tasks: { review: reviewTask } });
 
     expect(result.errors).toEqual([
-      { path: "agent", message: "must be one of: claude, codex, copilot" },
+      { path: "agent", message: "must be one of: claude, codex, copilot, fake" },
     ]);
   });
 
@@ -194,7 +194,7 @@ describe("validateConfig", () => {
     );
 
     expect(result.errors).toEqual([
-      { path: "agent", layer: "factory.yml", message: "must be one of: claude, codex, copilot" },
+      { path: "agent", layer: "factory.yml", message: "must be one of: claude, codex, copilot, fake" },
       { path: "tasks.review.timeout", layer: "template default", message: "must be >= 1" },
       { path: "tasks.review.turns", layer: "template acme/flow@v2", message: "must be >= 1" },
     ]);
