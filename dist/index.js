@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);
 var __create = Object.create;
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -15773,15 +15774,167 @@ function subjectFor(task, item) {
 // src/router/version.ts
 var STUB_VERSION = "1.0.0";
 var MIN_STUB_VERSION = "1.0.0";
+
+// src/router/github.ts
+function gitHubApi(token, owner, repo, baseUrl = "https://api.github.com") {
+  const call = async (method, path, body, okStatuses = []) => {
+    const response = await fetch(`${baseUrl}/repos/${owner}/${repo}${path}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "actions-factory"
+      },
+      body: body === void 0 ? void 0 : JSON.stringify(body)
+    });
+    if (!response.ok && !okStatuses.includes(response.status)) {
+      throw new Error(`GitHub ${method} ${path} failed: ${response.status} ${await response.text()}`);
+    }
+    return response.status === 204 || !response.ok ? void 0 : response.json();
+  };
+  const enc = encodeURIComponent;
+  return {
+    async permission(user) {
+      const result = await call("GET", `/collaborators/${enc(user)}/permission`, void 0, [404]);
+      return result?.permission ?? "none";
+    },
+    async listLabels() {
+      const labels = [];
+      for (let page = 1; ; page++) {
+        const batch = await call("GET", `/labels?per_page=100&page=${page}`);
+        labels.push(...batch.map(({ name, color, description }) => ({ name, color, description: description ?? "" })));
+        if (batch.length < 100) return labels;
+      }
+    },
+    async createLabel(label) {
+      await call("POST", "/labels", label);
+    },
+    async updateLabel(label) {
+      await call("PATCH", `/labels/${enc(label.name)}`, { color: label.color, description: label.description });
+    },
+    async removeLabel(issueNumber, name) {
+      await call("DELETE", `/issues/${issueNumber}/labels/${enc(name)}`, void 0, [404]);
+    },
+    async comment(issueNumber, body) {
+      await call("POST", `/issues/${issueNumber}/comments`, { body });
+    }
+  };
+}
+
+// src/router/run.ts
+import { readFileSync as readFileSync2 } from "node:fs";
+import { join as join3 } from "node:path";
+var BLOCKED = { name: "agent:blocked", color: "b60205", description: "The factory stopped; see its comment" };
+var TASK_LABEL_COLOR = "1d76db";
+async function runRouter(io) {
+  const fetchRepo = io.fetchRepo ?? gitFetcher({ cacheDir: io.cacheDir, token: io.factoryToken });
+  const loaded = await loadConfig({ clientRoot: io.clientRoot, factoryRoot: io.factoryRoot, fetchRepo });
+  const reader = io.api(io.githubToken);
+  const writer = io.factoryToken ? io.api(io.factoryToken) : void 0;
+  let decision = route({
+    event: { name: io.eventName, payload: io.payload },
+    config: loaded,
+    context: {
+      hasFactoryToken: writer !== void 0,
+      stubVersion: io.stubVersion,
+      factoryVersion: factoryVersion(io.factoryRoot),
+      minStubVersion: MIN_STUB_VERSION
+    }
+  });
+  if (decision.kind === "run" && !["admin", "write"].includes(await reader.permission(decision.actor))) {
+    decision = {
+      kind: "refuse",
+      code: "not-writer",
+      message: `@${decision.actor} added ${decision.label}, but only people with write access can start factory tasks.`,
+      subject: decision.subject,
+      warnings: decision.warnings
+    };
+  }
+  if (writer && loaded.ok && decision.kind !== "ignore") await ensureLabels(reader, writer, loaded.config);
+  const trigger = io.payload.label?.name;
+  if (decision.kind === "run" && "number" in decision.subject && trigger) {
+    await writer.removeLabel(decision.subject.number, trigger);
+  } else if (decision.kind === "refuse") {
+    await postRefusal(decision, { io, loaded, reader, writer, trigger });
+  }
+  io.summary(summaryFor(decision, loaded));
+  io.setOutput("decision", JSON.stringify(decision));
+  if (decision.kind === "run") io.setOutput("task", decision.task);
+  return decision;
+}
+async function postRefusal(decision, ctx) {
+  const body = `**actions-factory** didn't run${ctx.trigger ? ` \`${ctx.trigger}\`` : ""}: ${decision.message}${ctx.io.runUrl ? `
+
+[Run](${ctx.io.runUrl})` : ""}`;
+  const subject = decision.subject;
+  if (subject && "number" in subject) {
+    const poster = ctx.writer ?? ctx.reader;
+    await poster.comment(subject.number, body);
+    if (ctx.trigger) await poster.removeLabel(subject.number, ctx.trigger);
+    return;
+  }
+  const operatorIssue = ctx.loaded.config.operatorIssue;
+  if (ctx.writer && typeof operatorIssue === "number") await ctx.writer.comment(operatorIssue, body);
+}
+async function ensureLabels(reader, writer, config) {
+  const wanted = /* @__PURE__ */ new Map();
+  for (const [name, spec] of Object.entries(config.tasks ?? {})) {
+    if (spec.label) wanted.set(spec.label, { name: spec.label, color: TASK_LABEL_COLOR, description: `Starts the factory's ${name} task` });
+  }
+  wanted.set(BLOCKED.name, BLOCKED);
+  for (const [name, spec] of Object.entries(config.labels ?? {})) {
+    const base = wanted.get(name) ?? { name, color: "ededed", description: "" };
+    wanted.set(name, { name, color: spec.color ?? base.color, description: spec.description ?? base.description });
+  }
+  const existing = new Map((await reader.listLabels()).map((l) => [l.name, l]));
+  for (const label of wanted.values()) {
+    const have = existing.get(label.name);
+    if (!have) await writer.createLabel(label);
+    else if (have.color.toLowerCase() !== label.color.toLowerCase() || have.description !== label.description) {
+      await writer.updateLabel(label);
+    }
+  }
+}
+function summaryFor(decision, loaded) {
+  const lines = [`### actions-factory: ${headline(decision)}`, ""];
+  for (const warning of decision.warnings) lines.push(`> [!WARNING]`, `> ${warning}`, "");
+  if (decision.kind === "refuse") lines.push(decision.message, "");
+  if (loaded.layers.length > 0 || loaded.errors.length > 0) lines.push(renderConfig(loaded), "");
+  return lines.join("\n");
+}
+function headline(decision) {
+  switch (decision.kind) {
+    case "run":
+      return `${decision.task} on ${"number" in decision.subject ? `#${decision.subject.number}` : decision.subject.kind}`;
+    case "refuse":
+      return `refused (${decision.code})`;
+    case "command":
+      return decision.command === "show-config" ? "show-config" : `${decision.command} (not available yet)`;
+    case "sweep":
+      return "sweep (not available yet)";
+    case "ignore":
+      return `nothing to do: ${decision.reason}`;
+  }
+}
+function factoryVersion(factoryRoot) {
+  try {
+    return JSON.parse(readFileSync2(join3(factoryRoot, "package.json"), "utf8")).version;
+  } catch {
+    return "0.0.0";
+  }
+}
 export {
   COMMANDS,
   MIN_STUB_VERSION,
   SCHEMA_VERSION,
   STUB_VERSION,
   gitFetcher,
+  gitHubApi,
   loadConfig,
   renderConfig,
   route,
+  runRouter,
   validateConfig,
   validateTemplateManifest
 };

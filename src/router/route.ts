@@ -12,7 +12,14 @@ export type Decision = (
   | { kind: "sweep" }
 ) & { warnings: string[] };
 
-export type RefusalCode = "fork" | "missing-token" | "stale-stub" | "bad-config" | "wrong-subject" | "unknown-command";
+export type RefusalCode =
+  | "fork"
+  | "missing-token"
+  | "stale-stub"
+  | "bad-config"
+  | "wrong-subject"
+  | "unknown-command"
+  | "not-writer";
 
 export const COMMANDS = ["doctor", "show-config"] as const;
 export type Command = (typeof COMMANDS)[number];
