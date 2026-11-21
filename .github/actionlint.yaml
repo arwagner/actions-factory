@@ -3,3 +3,5 @@ paths:
     ignore:
       # actionlint's context schema predates job.workflow_repository / job.workflow_sha.
       - 'property "workflow_(repository|sha)" is not defined'
+      # actionlint predates concurrency queue: max (GitHub changelog, 2026-05-07).
+      - 'unexpected key "queue" for "concurrency" section'

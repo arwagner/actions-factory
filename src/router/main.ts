@@ -24,6 +24,7 @@ async function main(): Promise<void> {
     factoryToken: env("FACTORY_TOKEN"),
     githubToken: required("GITHUB_TOKEN"),
     api: (token) => gitHubApi(token, owner, repo, env("GITHUB_API_URL")),
+    runId: Number(env("GITHUB_RUN_ID")) || undefined,
     runUrl: `${env("GITHUB_SERVER_URL")}/${owner}/${repo}/actions/runs/${env("GITHUB_RUN_ID")}`,
     summary: (markdown) => appendFileSync(required("GITHUB_STEP_SUMMARY"), `${markdown}\n`),
     setOutput: (name, value) => {

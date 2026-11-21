@@ -15864,6 +15864,24 @@ function gitHubApi(token, owner, repo, baseUrl = "https://api.github.com") {
     },
     async mergePull(number) {
       await call("PUT", `/pulls/${number}/merge`, { merge_method: "merge" });
+    },
+    async listRunsSince(since) {
+      const runs = [];
+      for (let page = 1; page <= 10; page++) {
+        const batch = await call("GET", `/actions/runs?per_page=100&page=${page}&created=${enc(`>=${since}`)}`);
+        runs.push(...batch.workflow_runs.map((r) => ({ id: r.id, title: r.display_title, conclusion: r.conclusion })));
+        if (batch.workflow_runs.length < 100) break;
+      }
+      return runs;
+    },
+    async addAssignees(issueNumber, logins) {
+      await call("POST", `/issues/${issueNumber}/assignees`, { assignees: logins });
+    },
+    async removeAssignees(issueNumber, logins) {
+      await call("DELETE", `/issues/${issueNumber}/assignees`, { assignees: logins });
+    },
+    async requestReviewers(pullNumber, logins) {
+      await call("POST", `/pulls/${pullNumber}/requested_reviewers`, { reviewers: logins }, [422]);
     }
   };
 }
@@ -15979,6 +15997,22 @@ var CLI_VERSIONS = {
   fake: "none"
 };
 
+// src/router/limits.ts
+var LOOP_BRAKE = 10;
+function countRuns(runs, subject, currentRunId) {
+  const tasks = runs.filter((r) => r.id !== currentRunId && r.conclusion !== "skipped" && /^factory · agent:/.test(r.title));
+  const subjectToday = subject === void 0 ? 0 : tasks.filter((r) => r.title.endsWith(` \xB7 #${subject}`)).length;
+  return { today: tasks.length, subjectToday };
+}
+function startOfDay(now, timeZone) {
+  const parts2 = Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", { timeZone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" }).formatToParts(now).map((p) => [p.type, p.value])
+  );
+  const localAsUtc = Date.UTC(+parts2.year, +parts2.month - 1, +parts2.day, +parts2.hour, +parts2.minute, +parts2.second);
+  const offset = localAsUtc - Math.floor(now.getTime() / 1e3) * 1e3;
+  return new Date(Date.UTC(+parts2.year, +parts2.month - 1, +parts2.day) - offset).toISOString();
+}
+
 // src/router/run.ts
 var BLOCKED = { name: "agent:blocked", color: "b60205", description: "The factory stopped; see its comment" };
 var TASK_LABEL_COLOR = "1d76db";
@@ -16006,6 +16040,9 @@ async function runRouter(io) {
       warnings: decision.warnings
     };
   }
+  if (decision.kind === "run" && "number" in decision.subject) {
+    decision = await applyLimits(decision, io, loaded, reader);
+  }
   if (writer && loaded.ok && decision.kind !== "ignore") {
     try {
       await ensureLabels(reader, writer, loaded.config);
@@ -16017,9 +16054,17 @@ async function runRouter(io) {
     }
   }
   const trigger = io.payload.label?.name;
-  if (decision.kind === "run" && "number" in decision.subject && trigger) {
-    await writer.removeLabel(decision.subject.number, trigger);
+  const assignee = loaded.ok ? loaded.config.assignee : void 0;
+  if (decision.kind === "run" && "number" in decision.subject) {
+    if (trigger) await writer.removeLabel(decision.subject.number, trigger);
+    if (assignee) await writer.removeAssignees(decision.subject.number, [assignee]);
+  } else if (decision.kind === "defer") {
+    await postDeferral(decision, writer, io);
   } else if (decision.kind === "refuse") {
+    if (decision.code === "loop-brake" && decision.subject && "number" in decision.subject) {
+      await writer.addLabels(decision.subject.number, [BLOCKED.name]);
+      if (assignee) await writer.addAssignees(decision.subject.number, [assignee]);
+    }
     await postRefusal(decision, { io, loaded, reader, writer, trigger });
   }
   io.summary(summaryFor(decision, loaded));
@@ -16029,6 +16074,39 @@ async function runRouter(io) {
     io.setOutput("agent-job", JSON.stringify(agentJobSettings(loaded.config, decision.task)));
   }
   return decision;
+}
+async function applyLimits(decision, io, loaded, reader) {
+  const config = loaded.config;
+  const number = decision.subject.number;
+  const since = startOfDay(io.now ?? /* @__PURE__ */ new Date(), config.timezone);
+  const counts = countRuns(await reader.listRunsSince(since), number, io.runId);
+  if (counts.subjectToday >= LOOP_BRAKE) {
+    return {
+      kind: "refuse",
+      code: "loop-brake",
+      message: `#${number} has had ${LOOP_BRAKE} factory runs today, which looks like a loop, so it's parked. Remove \`agent:blocked\` and add ${decision.label} again to carry on.`,
+      subject: decision.subject,
+      warnings: decision.warnings
+    };
+  }
+  if (counts.today >= config.throttles.runsPerDay) {
+    return {
+      kind: "defer",
+      reason: `this repo has reached its limit of ${config.throttles.runsPerDay} factory runs today (\`throttles.runsPerDay\`). ${decision.label} stays on, and a later tick will start it.`,
+      subject: decision.subject,
+      warnings: decision.warnings
+    };
+  }
+  return decision;
+}
+async function postDeferral(decision, writer, io) {
+  if (!("number" in decision.subject)) return;
+  const day = (io.now ?? /* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+  const marker = `<!-- factory:deferred ${day} -->`;
+  const comments = await writer.listComments(decision.subject.number);
+  if (comments.some((c) => c.body.startsWith(marker))) return;
+  await writer.comment(decision.subject.number, `${marker}
+**actions-factory** is waiting: ${decision.reason}`);
 }
 async function postRefusal(decision, ctx) {
   const body = `**actions-factory** didn't run${ctx.trigger ? ` \`${ctx.trigger}\`` : ""}: ${decision.message}${ctx.io.runUrl ? `
@@ -16067,6 +16145,7 @@ function summaryFor(decision, loaded) {
   const lines = [`### actions-factory: ${headline(decision)}`, ""];
   for (const warning of decision.warnings) lines.push(`> [!WARNING]`, `> ${warning}`, "");
   if (decision.kind === "refuse") lines.push(decision.message, "");
+  if (decision.kind === "defer") lines.push(decision.reason, "");
   if (loaded.layers.length > 0 || loaded.errors.length > 0) lines.push(renderConfig(loaded), "");
   return lines.join("\n");
 }
@@ -16080,6 +16159,8 @@ function headline(decision) {
       return decision.command === "show-config" ? "show-config" : `${decision.command} (not available yet)`;
     case "sweep":
       return "sweep (not available yet)";
+    case "defer":
+      return `deferred on ${"number" in decision.subject ? `#${decision.subject.number}` : decision.subject.kind}`;
     case "ignore":
       return `nothing to do: ${decision.reason}`;
   }
@@ -16098,6 +16179,8 @@ function agentJobSettings(config, taskName) {
     // The agent step's backstop; the adapter enforces `timeout` itself.
     stepTimeout: timeout + 5,
     turns: task.turns,
+    // concurrentRuns: 1 serializes every agent job in the repo (§7).
+    repoWide: config.throttles.concurrentRuns === 1,
     // Setup and checks get a margin on top of the agent's own limit, within the 6 h hosted cap (§8).
     jobTimeout: Math.min(360, timeout * task.turns + 30)
   };
@@ -16283,6 +16366,7 @@ async function applyRun(io) {
     const reason2 = error instanceof Error ? error.message : String(error);
     if (target !== void 0) {
       await io.api.addLabels(target, [BLOCKED2]);
+      if (io.assignee) await io.api.addAssignees(target, [io.assignee]);
       const retry = io.task.label ? ` To retry, add \`${io.task.label}\` again.` : "";
       await upsertStatus(io, target, `\u26D4 \`${io.taskName}\` stopped: ${reason2}${retry}`);
     }
@@ -16316,6 +16400,10 @@ ${errors.map((e) => `- \`${e.path || "plan"}\`: ${e.message}`).join("\n")}`);
     const draft = io.task.writes.pullRequest !== false && io.task.writes.pullRequest.draft;
     const base = await io.api.defaultBranch();
     pullNumber = await io.api.createPull({ ...plan.pullRequest, head: branch, base, draft });
+    if (io.assignee && !io.prsGetFactoryReview) {
+      await io.api.addAssignees(pullNumber, [io.assignee]);
+      await io.api.requestReviewers(pullNumber, [io.assignee]);
+    }
   }
   if (number !== void 0) await applyItem(io, number, plan);
   for (const issue of plan.createIssues ?? []) {
@@ -16372,6 +16460,7 @@ async function applyItem(io, number, item) {
   if (add.length > 0) await io.api.addLabels(number, add);
   for (const label of remove) await io.api.removeLabel(number, label);
   if (item.close === true || item.closeIssue === true) await io.api.closeIssue(number);
+  if (outcome.waitsOnPerson && io.assignee) await io.api.addAssignees(number, [io.assignee]);
 }
 function statusTarget(subject) {
   if ("number" in subject) return subject.number;

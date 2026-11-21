@@ -6,6 +6,7 @@ import { renderConfig } from "../config/render.js";
 import type { GitHubApi, Label } from "./github.js";
 import { type Decision, route } from "./route.js";
 import { CLI_VERSIONS } from "../agents/versions.js";
+import { countRuns, LOOP_BRAKE, startOfDay } from "./limits.js";
 import { MIN_STUB_VERSION } from "./version.js";
 
 /** Everything the route job reads and every side effect it has. */
@@ -27,6 +28,9 @@ export interface RouterIO {
   runUrl?: string;
   summary: (markdown: string) => void;
   setOutput: (name: string, value: string) => void;
+  /** This run's id, left out of today's run count. */
+  runId?: number;
+  now?: Date;
 }
 
 const BLOCKED: Label = { name: "agent:blocked", color: "b60205", description: "The factory stopped; see its comment" };
@@ -60,6 +64,10 @@ export async function runRouter(io: RouterIO): Promise<Decision> {
     };
   }
 
+  if (decision.kind === "run" && "number" in decision.subject) {
+    decision = await applyLimits(decision, io, loaded, reader);
+  }
+
   if (writer && loaded.ok && decision.kind !== "ignore") {
     try {
       await ensureLabels(reader, writer, loaded.config);
@@ -74,9 +82,17 @@ export async function runRouter(io: RouterIO): Promise<Decision> {
   }
 
   const trigger = (io.payload.label as { name?: string } | undefined)?.name;
-  if (decision.kind === "run" && "number" in decision.subject && trigger) {
-    await writer!.removeLabel(decision.subject.number, trigger);
+  const assignee = loaded.ok ? (loaded.config.assignee as string | undefined) : undefined;
+  if (decision.kind === "run" && "number" in decision.subject) {
+    if (trigger) await writer!.removeLabel(decision.subject.number, trigger);
+    if (assignee) await writer!.removeAssignees(decision.subject.number, [assignee]);
+  } else if (decision.kind === "defer") {
+    await postDeferral(decision, writer!, io);
   } else if (decision.kind === "refuse") {
+    if (decision.code === "loop-brake" && decision.subject && "number" in decision.subject) {
+      await writer!.addLabels(decision.subject.number, [BLOCKED.name]);
+      if (assignee) await writer!.addAssignees(decision.subject.number, [assignee]);
+    }
     await postRefusal(decision, { io, loaded, reader, writer, trigger });
   }
 
@@ -90,6 +106,43 @@ export async function runRouter(io: RouterIO): Promise<Decision> {
 }
 
 type Refusal = Extract<Decision, { kind: "refuse" }>;
+type Run = Extract<Decision, { kind: "run" }>;
+
+/** `runsPerDay` defers the run (the label stays, so a later tick picks it up); the loop brake parks the item. */
+async function applyLimits(decision: Run, io: RouterIO, loaded: LoadResult, reader: GitHubApi): Promise<Decision> {
+  const config = loaded.config as { timezone: string; throttles: { runsPerDay: number } };
+  const number = (decision.subject as { number: number }).number;
+  const since = startOfDay(io.now ?? new Date(), config.timezone);
+  const counts = countRuns(await reader.listRunsSince(since), number, io.runId);
+  if (counts.subjectToday >= LOOP_BRAKE) {
+    return {
+      kind: "refuse",
+      code: "loop-brake",
+      message: `#${number} has had ${LOOP_BRAKE} factory runs today, which looks like a loop, so it's parked. Remove \`agent:blocked\` and add ${decision.label} again to carry on.`,
+      subject: decision.subject,
+      warnings: decision.warnings,
+    };
+  }
+  if (counts.today >= config.throttles.runsPerDay) {
+    return {
+      kind: "defer",
+      reason: `this repo has reached its limit of ${config.throttles.runsPerDay} factory runs today (\`throttles.runsPerDay\`). ${decision.label} stays on, and a later tick will start it.`,
+      subject: decision.subject,
+      warnings: decision.warnings,
+    };
+  }
+  return decision;
+}
+
+/** One comment per item per day, however many ticks find it still waiting. */
+async function postDeferral(decision: Extract<Decision, { kind: "defer" }>, writer: GitHubApi, io: RouterIO): Promise<void> {
+  if (!("number" in decision.subject)) return;
+  const day = (io.now ?? new Date()).toISOString().slice(0, 10);
+  const marker = `<!-- factory:deferred ${day} -->`;
+  const comments = await writer.listComments(decision.subject.number);
+  if (comments.some((c) => c.body.startsWith(marker))) return;
+  await writer.comment(decision.subject.number, `${marker}\n**actions-factory** is waiting: ${decision.reason}`);
+}
 
 /**
  * Comments on the item and takes the trigger label off, so the sweep doesn't refuse it again on every tick.
@@ -138,6 +191,7 @@ function summaryFor(decision: Decision, loaded: LoadResult): string {
   const lines = [`### actions-factory: ${headline(decision)}`, ""];
   for (const warning of decision.warnings) lines.push(`> [!WARNING]`, `> ${warning}`, "");
   if (decision.kind === "refuse") lines.push(decision.message, "");
+  if (decision.kind === "defer") lines.push(decision.reason, "");
   if (loaded.layers.length > 0 || loaded.errors.length > 0) lines.push(renderConfig(loaded), "");
   return lines.join("\n");
 }
@@ -152,6 +206,8 @@ function headline(decision: Decision): string {
       return decision.command === "show-config" ? "show-config" : `${decision.command} (not available yet)`;
     case "sweep":
       return "sweep (not available yet)";
+    case "defer":
+      return `deferred on ${"number" in decision.subject ? `#${decision.subject.number}` : decision.subject.kind}`;
     case "ignore":
       return `nothing to do: ${decision.reason}`;
   }
@@ -172,6 +228,8 @@ export function agentJobSettings(config: Record<string, unknown>, taskName: stri
     // The agent step's backstop; the adapter enforces `timeout` itself.
     stepTimeout: timeout + 5,
     turns: task.turns as number,
+    // concurrentRuns: 1 serializes every agent job in the repo (§7).
+    repoWide: (config.throttles as { concurrentRuns: unknown }).concurrentRuns === 1,
     // Setup and checks get a margin on top of the agent's own limit, within the 6 h hosted cap (§8).
     jobTimeout: Math.min(360, timeout * (task.turns as number) + 30),
   };

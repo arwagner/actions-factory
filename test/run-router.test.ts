@@ -64,6 +64,7 @@ describe("runRouter", () => {
       timeout: 60,
       stepTimeout: 65,
       turns: 1,
+      repoWide: false,
       jobTimeout: 90,
     });
     expect(gh.calls("updateLabel").map((w) => w.args)).toEqual([
@@ -128,5 +129,43 @@ describe("runRouter", () => {
     });
 
     await expect(runRouter(io({ api }))).rejects.toThrow(/FACTORY_TOKEN .* can't write this repo/);
+  });
+
+  describe("limits", () => {
+    const runs = (n: number, title: string) => Array.from({ length: n }, (_, i) => ({ id: i + 1, title, conclusion: "success" }));
+
+    it("defers a run over runsPerDay: the label stays, and the item gets one comment a day", async () => {
+      gh.runs = runs(50, "factory · agent:review · #7");
+      const now = new Date("2026-11-21T12:00:00Z");
+
+      const first = await runRouter(io({ now }));
+      await runRouter(io({ now }));
+
+      expect(first).toMatchObject({ kind: "defer" });
+      expect(gh.calls("removeLabel")).toEqual([]);
+      expect(gh.calls("comment")).toHaveLength(1);
+      expect((gh.calls("comment")[0].args as { body: string }).body).toContain("throttles.runsPerDay");
+      expect(outputs.task).toBeUndefined();
+    });
+
+    it("parks a subject that has run 10 times today with agent:blocked, and assigns the assignee", async () => {
+      gh.runs = runs(10, "factory · agent:implement · #42");
+      const clientRoot = tree({ "factory.yml": "schemaVersion: 1\nassignee: ana\n" });
+
+      const decision = await runRouter(io({ clientRoot }));
+
+      expect(decision).toMatchObject({ kind: "refuse", code: "loop-brake" });
+      expect(gh.calls("addLabels").map((w) => w.args)).toEqual([{ number: 42, names: ["agent:blocked"] }]);
+      expect(gh.calls("addAssignees").map((w) => w.args)).toEqual([{ number: 42, logins: ["ana"] }]);
+      expect(gh.calls("removeLabel").map((w) => w.args)).toEqual([{ number: 42, name: "agent:implement" }]);
+    });
+
+    it("unassigns the assignee when a run picks the item up", async () => {
+      const clientRoot = tree({ "factory.yml": "schemaVersion: 1\nassignee: ana\n" });
+
+      await runRouter(io({ clientRoot }));
+
+      expect(gh.calls("removeAssignees").map((w) => w.args)).toEqual([{ number: 42, logins: ["ana"] }]);
+    });
   });
 });

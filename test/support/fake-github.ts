@@ -7,6 +7,7 @@ export class FakeGitHub {
   comments: Record<number, Array<{ id: number; body: string; author?: string }>> = {};
   issues: Record<number, { title: string; body: string }> = {};
   search: Array<{ number: number; title: string; body: string }> = [];
+  runs: Array<{ id: number; title: string; conclusion: string | null }> = [];
   pulls: Record<number, { head: string; mergeable: boolean }> = {};
   writes: Array<{ token: string; call: string; args: unknown }> = [];
   private nextId = 1000;
@@ -54,6 +55,16 @@ export class FakeGitHub {
       createPull: async (pull) => {
         record("createPull", pull);
         return 77;
+      },
+      listRunsSince: async () => structuredClone(this.runs),
+      addAssignees: async (number, logins) => {
+        record("addAssignees", { number, logins });
+      },
+      removeAssignees: async (number, logins) => {
+        record("removeAssignees", { number, logins });
+      },
+      requestReviewers: async (number, logins) => {
+        record("requestReviewers", { number, logins });
       },
       mergePull: async (number) => {
         if (!this.pulls[number]?.mergeable) throw new Error("Pull Request is not mergeable");

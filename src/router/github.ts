@@ -28,6 +28,11 @@ export interface GitHubApi {
   createPull(pull: { title: string; body: string; head: string; base: string; draft: boolean }): Promise<number>;
   /** Merges with a merge commit. Throws if GitHub refuses. */
   mergePull(number: number): Promise<void>;
+  /** Workflow runs created at or after `since` (ISO time), newest first. */
+  listRunsSince(since: string): Promise<Array<{ id: number; title: string; conclusion: string | null }>>;
+  addAssignees(issueNumber: number, logins: string[]): Promise<void>;
+  removeAssignees(issueNumber: number, logins: string[]): Promise<void>;
+  requestReviewers(pullNumber: number, logins: string[]): Promise<void>;
 }
 
 /** A fetch-based client for `owner/repo`. */
@@ -123,6 +128,26 @@ export function gitHubApi(token: string, owner: string, repo: string, baseUrl = 
     },
     async mergePull(number) {
       await call("PUT", `/pulls/${number}/merge`, { merge_method: "merge" });
+    },
+    async listRunsSince(since) {
+      const runs: Array<{ id: number; title: string; conclusion: string | null }> = [];
+      for (let page = 1; page <= 10; page++) {
+        const batch = (await call("GET", `/actions/runs?per_page=100&page=${page}&created=${enc(`>=${since}`)}`)) as {
+          workflow_runs: Array<{ id: number; display_title: string; conclusion: string | null }>;
+        };
+        runs.push(...batch.workflow_runs.map((r) => ({ id: r.id, title: r.display_title, conclusion: r.conclusion })));
+        if (batch.workflow_runs.length < 100) break;
+      }
+      return runs;
+    },
+    async addAssignees(issueNumber, logins) {
+      await call("POST", `/issues/${issueNumber}/assignees`, { assignees: logins });
+    },
+    async removeAssignees(issueNumber, logins) {
+      await call("DELETE", `/issues/${issueNumber}/assignees`, { assignees: logins });
+    },
+    async requestReviewers(pullNumber, logins) {
+      await call("POST", `/pulls/${pullNumber}/requested_reviewers`, { reviewers: logins }, [422]);
     },
   };
 }

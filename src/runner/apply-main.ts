@@ -49,6 +49,10 @@ async function main(): Promise<void> {
     api: gitHubApi(token, owner, repo, env("GITHUB_API_URL")),
     runId: required("GITHUB_RUN_ID"),
     runUrl: `${server}/${owner}/${repo}/actions/runs/${required("GITHUB_RUN_ID")}`,
+    assignee: loaded.config.assignee as string | undefined,
+    prsGetFactoryReview: Object.values(loaded.config.tasks as Record<string, ApplyTask>).some(
+      (t) => t.subject === "pr" && t.label !== undefined && !t.writes.merge,
+    ),
     runHook: (path, hookEnv) => runHook(path, { ...hookEnv, FACTORY_TOKEN: token, GH_TOKEN: token }, checkout),
   });
   if (!result.ok) {
