@@ -10,6 +10,8 @@ export interface HandoffMeta {
   checksPassed: boolean;
   /** For a batch subject: the issues the agent was given. */
   batchNumbers?: number[];
+  /** Summed over every round, as far as the CLI reports it. */
+  usage?: { inputTokens?: number; outputTokens?: number; costUsd?: number };
 }
 
 export const HANDOFF_ARTIFACT = "factory-handoff";

@@ -15875,6 +15875,15 @@ function subjectFor(task, item) {
   }
 }
 
+// src/agents/claude.ts
+var CLAUDE_CODE_VERSION = "2.1.319";
+
+// src/agents/versions.ts
+var CLI_VERSIONS = {
+  claude: CLAUDE_CODE_VERSION,
+  fake: "none"
+};
+
 // src/router/version.ts
 var MIN_STUB_VERSION = "1.0.0";
 
@@ -15987,8 +15996,10 @@ function agentJobSettings(config, taskName) {
   const task = config.tasks[taskName];
   const pick = (key) => task[key] ?? config[key];
   const timeout = task.timeout;
+  const agent = pick("agent");
   return {
-    agent: pick("agent"),
+    agent,
+    cliVersion: CLI_VERSIONS[agent] ?? "none",
     runsOn: pick("runsOn"),
     container: pick("container") ?? "",
     timeout,

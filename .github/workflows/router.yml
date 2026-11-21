@@ -81,6 +81,7 @@ jobs:
     timeout-minutes: ${{ fromJSON(needs.route.outputs.agent-job).jobTimeout }}
     env:
       AGENT: ${{ fromJSON(needs.route.outputs.agent-job).agent }}
+      FACTORY_REPO_PRIVATE: ${{ github.event.repository.private }}
       DECISION: ${{ needs.route.outputs.decision }}
     steps:
       - name: Check out the client repo
@@ -103,6 +104,13 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 24
+
+      - name: Cache the agent CLI
+        if: fromJSON(needs.route.outputs.agent-job).cliVersion != 'none'
+        uses: actions/cache@v4
+        with:
+          path: ~/.factory-agents
+          key: factory-agent-${{ env.AGENT }}-${{ fromJSON(needs.route.outputs.agent-job).cliVersion }}-${{ runner.os }}-${{ runner.arch }}
 
       - name: Client setup
         if: hashFiles('.factory/setup/action.yml') != ''

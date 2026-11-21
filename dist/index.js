@@ -15869,8 +15869,117 @@ function gitHubApi(token, owner, repo, baseUrl = "https://api.github.com") {
 }
 
 // src/router/run.ts
-import { readFileSync as readFileSync2 } from "node:fs";
+import { readFileSync as readFileSync3 } from "node:fs";
+import { join as join4 } from "node:path";
+
+// src/agents/claude.ts
+import { execFile as execFile2, spawn } from "node:child_process";
+import { cpSync, existsSync as existsSync3, mkdirSync as mkdirSync2, readFileSync as readFileSync2, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join as join3 } from "node:path";
+import { promisify as promisify2 } from "node:util";
+
+// src/agents/scrub.ts
+function scrubValues(text, secrets) {
+  return secrets.filter((s) => s.length >= 4).sort((a, b) => b.length - a.length).reduce((out, s) => out.split(s).join("***"), text);
+}
+
+// src/agents/claude.ts
+var CLAUDE_CODE_VERSION = "2.1.319";
+var CREDENTIALS = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"];
+var WITHHELD = ["GITHUB_TOKEN", "GH_TOKEN", "FACTORY_TOKEN", "FACTORY_CHECK_ENV", "ACTIONS_RUNTIME_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_TOKEN"];
+function claudeAdapter(options = {}) {
+  const install = options.install ?? installPinned;
+  const skillsDir = options.skillsDir ?? join3(homedir(), ".claude", "skills");
+  return {
+    name: "claude",
+    credentials: CREDENTIALS,
+    async run(input) {
+      for (const [name, path] of Object.entries(input.skills)) {
+        mkdirSync2(skillsDir, { recursive: true });
+        cpSync(path, join3(skillsDir, name), { recursive: true });
+      }
+      const args = ["-p", "--output-format", "stream-json", "--verbose", "--json-schema", readFileSync2(input.planSchemaFile, "utf8")];
+      args.push("--permission-mode", "bypassPermissions");
+      if (input.permission === "read-only") args.push("--restricted", "--disallowedTools", "Edit", "Write", "NotebookEdit");
+      if (input.model) args.push("--model", input.model);
+      const env = { ...process.env };
+      for (const name of WITHHELD) delete env[name];
+      const secrets = CREDENTIALS.map((name) => process.env[name]).filter((v) => Boolean(v));
+      const { code, stdout, timedOut } = await runCli(await install(), args, {
+        cwd: input.checkout,
+        env,
+        stdin: readFileSync2(input.promptFile, "utf8"),
+        timeoutMs: input.timeoutMinutes * 6e4
+      });
+      writeFileSync(input.transcriptFile, scrubValues(stdout, secrets));
+      const result = lastResult(stdout);
+      if (result?.structured_output !== void 0) writeFileSync(input.planFile, JSON.stringify(result.structured_output, null, 2));
+      const usage = result ? { inputTokens: result.usage?.input_tokens, outputTokens: result.usage?.output_tokens, costUsd: result.total_cost_usd } : void 0;
+      const status = timedOut ? "timed-out" : code !== 0 || !result || result.is_error ? "failed" : "ok";
+      return { status, usage };
+    }
+  };
+}
+function lastResult(ndjson) {
+  const lines = ndjson.trim().split("\n").reverse();
+  for (const line of lines) {
+    try {
+      const event = JSON.parse(line);
+      if (event.type === "result") return event;
+    } catch {
+    }
+  }
+  return void 0;
+}
+function runCli(binary, args, opts) {
+  return new Promise((resolve2, reject) => {
+    const child = spawn(binary, args, { cwd: opts.cwd, env: opts.env, stdio: ["pipe", "pipe", "inherit"], detached: true });
+    let stdout = "";
+    let timedOut = false;
+    const killGroup = (signal) => {
+      try {
+        process.kill(-child.pid, signal);
+      } catch {
+      }
+    };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      killGroup("SIGTERM");
+      setTimeout(() => killGroup("SIGKILL"), 1e4).unref();
+    }, opts.timeoutMs);
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.on("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      resolve2({ code: code ?? 1, stdout, timedOut });
+    });
+    child.stdin.end(opts.stdin);
+  });
+}
+async function installPinned() {
+  const root = process.env.FACTORY_AGENT_CACHE ?? join3(homedir(), ".factory-agents");
+  const dir = join3(root, "claude", CLAUDE_CODE_VERSION);
+  const binary = join3(dir, "node_modules", ".bin", "claude");
+  if (!existsSync3(binary)) {
+    mkdirSync2(dir, { recursive: true });
+    await promisify2(execFile2)("npm", ["install", "--prefix", dir, "--no-audit", "--no-fund", `@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}`]);
+  }
+  return binary;
+}
+
+// src/agents/versions.ts
+var CLI_VERSIONS = {
+  claude: CLAUDE_CODE_VERSION,
+  fake: "none"
+};
+
+// src/router/run.ts
 var BLOCKED = { name: "agent:blocked", color: "b60205", description: "The factory stopped; see its comment" };
 var TASK_LABEL_COLOR = "1d76db";
 async function runRouter(io) {
@@ -15979,8 +16088,10 @@ function agentJobSettings(config, taskName) {
   const task = config.tasks[taskName];
   const pick = (key) => task[key] ?? config[key];
   const timeout = task.timeout;
+  const agent = pick("agent");
   return {
-    agent: pick("agent"),
+    agent,
+    cliVersion: CLI_VERSIONS[agent] ?? "none",
     runsOn: pick("runsOn"),
     container: pick("container") ?? "",
     timeout,
@@ -15993,7 +16104,7 @@ function agentJobSettings(config, taskName) {
 }
 function factoryVersion(factoryRoot) {
   try {
-    return JSON.parse(readFileSync2(join3(factoryRoot, "package.json"), "utf8")).version;
+    return JSON.parse(readFileSync3(join4(factoryRoot, "package.json"), "utf8")).version;
   } catch {
     return "0.0.0";
   }
@@ -16095,16 +16206,16 @@ function planJsonSchema(ctx) {
   return { type: "object", additionalProperties: false, required: ["outcome"], properties: { ...SINGLE_FIELDS, ...extras } };
 }
 function checkShape(value, fields, planSchema, at, errors) {
-  const join6 = (key) => at ? `${at}.${key}` : key;
+  const join7 = (key) => at ? `${at}.${key}` : key;
   const extraKeys = new Set(Object.keys(planSchema?.properties ?? {}));
   const base = {};
   const extras = {};
   for (const [key, v] of Object.entries(value)) {
     if (key in fields) base[key] = v;
     else if (extraKeys.has(key)) extras[key] = v;
-    else errors.push({ path: join6(key), message: "unknown field" });
+    else errors.push({ path: join7(key), message: "unknown field" });
   }
-  if (base.outcome === void 0) errors.push({ path: join6("outcome"), message: "required" });
+  if (base.outcome === void 0) errors.push({ path: join7("outcome"), message: "required" });
   const check = (schema, data) => {
     const validate = ajv2.compile(schema);
     if (!validate(data)) errors.push(...(validate.errors ?? []).map((e) => toPlanError(e, at)));
@@ -16113,38 +16224,38 @@ function checkShape(value, fields, planSchema, at, errors) {
   if (planSchema) check({ ...planSchema, required: void 0 }, extras);
 }
 function checkWrites(plan, task, at, errors) {
-  const join6 = (key) => at ? `${at}.${key}` : key;
+  const join7 = (key) => at ? `${at}.${key}` : key;
   const outcomes = Object.keys(task.outcomes);
   if (typeof plan.outcome === "string" && !outcomes.includes(plan.outcome)) {
-    errors.push({ path: join6("outcome"), message: `${plan.outcome} isn't one of this task's outcomes: ${outcomes.join(", ")}` });
+    errors.push({ path: join7("outcome"), message: `${plan.outcome} isn't one of this task's outcomes: ${outcomes.join(", ")}` });
   }
-  if (plan.comment !== void 0 && !task.writes.comment) errors.push({ path: join6("comment"), message: "this task may not comment" });
+  if (plan.comment !== void 0 && !task.writes.comment) errors.push({ path: join7("comment"), message: "this task may not comment" });
   if (isMap2(plan.labels)) {
     for (const direction of ["add", "remove"]) {
       const labels = plan.labels[direction];
       if (!Array.isArray(labels)) continue;
       for (const label of labels) {
         if (direction === "add" && label === MERGE_LABEL2) {
-          errors.push({ path: join6("labels.add"), message: `${MERGE_LABEL2} is added only by a person` });
+          errors.push({ path: join7("labels.add"), message: `${MERGE_LABEL2} is added only by a person` });
         } else if (!task.writes.labels.includes(label)) {
-          errors.push({ path: join6(`labels.${direction}`), message: `${label} isn't in this task's writes.labels` });
+          errors.push({ path: join7(`labels.${direction}`), message: `${label} isn't in this task's writes.labels` });
         }
       }
     }
   }
   if (plan.pullRequest !== void 0 && task.writes.pullRequest === false) {
-    errors.push({ path: join6("pullRequest"), message: "this task may not open a pull request" });
+    errors.push({ path: join7("pullRequest"), message: "this task may not open a pull request" });
   }
   for (const key of ["closeIssue", "close"]) {
-    if (plan[key] === true && !task.writes.closeIssue) errors.push({ path: join6(key), message: "this task may not close the issue" });
+    if (plan[key] === true && !task.writes.closeIssue) errors.push({ path: join7(key), message: "this task may not close the issue" });
   }
   if (Array.isArray(plan.createIssues) && plan.createIssues.length > task.writes.createIssues) {
     errors.push({
-      path: join6("createIssues"),
+      path: join7("createIssues"),
       message: `this task may create at most ${task.writes.createIssues} issues; the plan asks for ${plan.createIssues.length}`
     });
   }
-  if (plan.merge === true && !task.writes.merge) errors.push({ path: join6("merge"), message: "this task may not merge" });
+  if (plan.merge === true && !task.writes.merge) errors.push({ path: join7("merge"), message: "this task may not merge" });
 }
 function toPlanError(e, at) {
   const segments = [...at ? at.split(".") : [], ...e.instancePath.split("/").slice(1)];
@@ -16281,15 +16392,15 @@ function isMap3(value) {
 }
 
 // src/runner/bundle.ts
-import { execFile as execFile2 } from "node:child_process";
-import { existsSync as existsSync3 } from "node:fs";
-import { promisify as promisify2 } from "node:util";
-var run2 = promisify2(execFile2);
+import { execFile as execFile3 } from "node:child_process";
+import { existsSync as existsSync4 } from "node:fs";
+import { promisify as promisify3 } from "node:util";
+var run2 = promisify3(execFile3);
 var WORK_REF = "factory-work";
 function bundledWork({ checkout, bundle, remote, token }) {
   const git2 = (...args) => run2("git", args, { cwd: checkout });
   let fetched;
-  const fetch2 = () => fetched ??= existsSync3(bundle) ? git2("fetch", "-q", bundle, `${WORK_REF}:${WORK_REF}`).then(() => true) : Promise.resolve(false);
+  const fetch2 = () => fetched ??= existsSync4(bundle) ? git2("fetch", "-q", bundle, `${WORK_REF}:${WORK_REF}`).then(() => true) : Promise.resolve(false);
   return {
     async changedFiles() {
       if (!await fetch2()) return [];
@@ -16314,41 +16425,41 @@ function bundledWork({ checkout, bundle, remote, token }) {
 var HANDOFF_ARTIFACT = "factory-handoff";
 
 // src/agents/fake.ts
-import { existsSync as existsSync4, mkdirSync as mkdirSync2, readFileSync as readFileSync3, writeFileSync } from "node:fs";
-import { dirname as dirname2, join as join4 } from "node:path";
+import { existsSync as existsSync5, mkdirSync as mkdirSync3, readFileSync as readFileSync4, writeFileSync as writeFileSync2 } from "node:fs";
+import { dirname as dirname2, join as join5 } from "node:path";
 var fakeAdapter = {
   name: "fake",
   credentials: [],
   async run(input) {
-    const dir = join4(input.checkout, ".factory/fake");
-    const perTurn = join4(dir, `${input.task}.turn${input.turn}.json`);
-    const file = existsSync4(perTurn) ? perTurn : join4(dir, `${input.task}.json`);
-    if (!existsSync4(file)) {
-      writeFileSync(input.transcriptFile, `${JSON.stringify({ type: "error", message: `no fake script at ${file}` })}
+    const dir = join5(input.checkout, ".factory/fake");
+    const perTurn = join5(dir, `${input.task}.turn${input.turn}.json`);
+    const file = existsSync5(perTurn) ? perTurn : join5(dir, `${input.task}.json`);
+    if (!existsSync5(file)) {
+      writeFileSync2(input.transcriptFile, `${JSON.stringify({ type: "error", message: `no fake script at ${file}` })}
 `);
       return { status: "failed" };
     }
-    const script = JSON.parse(readFileSync3(file, "utf8"));
+    const script = JSON.parse(readFileSync4(file, "utf8"));
     for (const [path, content] of Object.entries(script.files ?? {})) {
       if (input.permission === "read-only") break;
-      mkdirSync2(dirname2(join4(input.checkout, path)), { recursive: true });
-      writeFileSync(join4(input.checkout, path), content);
+      mkdirSync3(dirname2(join5(input.checkout, path)), { recursive: true });
+      writeFileSync2(join5(input.checkout, path), content);
     }
-    writeFileSync(input.planFile, JSON.stringify(script.plan, null, 2));
-    writeFileSync(input.transcriptFile, `${JSON.stringify({ type: "fake", script: file, turn: input.turn })}
+    writeFileSync2(input.planFile, JSON.stringify(script.plan, null, 2));
+    writeFileSync2(input.transcriptFile, `${JSON.stringify({ type: "fake", script: file, turn: input.turn })}
 `);
     return { status: "ok", usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 } };
   }
 };
 
 // src/agents/index.ts
-var ADAPTERS = { fake: fakeAdapter };
+var ADAPTERS = { claude: claudeAdapter(), fake: fakeAdapter };
 
 // src/runner/agent-job.ts
-import { execFile as execFile3 } from "node:child_process";
-import { copyFileSync, existsSync as existsSync5, mkdirSync as mkdirSync3, readFileSync as readFileSync4, writeFileSync as writeFileSync2 } from "node:fs";
-import { join as join5 } from "node:path";
-import { promisify as promisify3 } from "node:util";
+import { execFile as execFile4 } from "node:child_process";
+import { copyFileSync, existsSync as existsSync6, mkdirSync as mkdirSync4, readFileSync as readFileSync5, writeFileSync as writeFileSync3 } from "node:fs";
+import { join as join6 } from "node:path";
+import { promisify as promisify4 } from "node:util";
 
 // src/runner/check-env.ts
 var MIN_LINE = 3;
@@ -16434,31 +16545,31 @@ function renderItem(item) {
 }
 
 // src/runner/agent-job.ts
-var git = promisify3(execFile3);
+var git = promisify4(execFile4);
 var files = (workDir) => ({
-  state: join5(workDir, "state.json"),
-  prompt: join5(workDir, "prompt.md"),
-  planSchema: join5(workDir, "plan.schema.json"),
-  plan: join5(workDir, "plan.json"),
-  transcript: join5(workDir, "transcript.ndjson"),
-  handoff: join5(workDir, "handoff")
+  state: join6(workDir, "state.json"),
+  prompt: join6(workDir, "prompt.md"),
+  planSchema: join6(workDir, "plan.schema.json"),
+  plan: join6(workDir, "plan.json"),
+  transcript: join6(workDir, "transcript.ndjson"),
+  handoff: join6(workDir, "handoff")
 });
 async function prepare(io) {
   const f = files(io.workDir);
-  mkdirSync3(io.workDir, { recursive: true });
+  mkdirSync4(io.workDir, { recursive: true });
   const { items, batchNumbers } = await gatherSubject(io);
-  const planSchema = io.task.planSchema ? JSON.parse(readFileSync4(io.task.planSchema, "utf8")) : void 0;
+  const planSchema = io.task.planSchema ? JSON.parse(readFileSync5(io.task.planSchema, "utf8")) : void 0;
   const ctxSubject = io.subject.kind === "batch" ? { kind: "batch", numbers: batchNumbers ?? [] } : io.subject;
-  writeFileSync2(f.planSchema, JSON.stringify(planJsonSchema({ subject: ctxSubject, planSchema }), null, 2));
+  writeFileSync3(f.planSchema, JSON.stringify(planJsonSchema({ subject: ctxSubject, planSchema }), null, 2));
   const promptInput = {
-    prompt: readFileSync4(io.task.prompt, "utf8"),
+    prompt: readFileSync5(io.task.prompt, "utf8"),
     instructions: io.task.instructions,
     items,
     outcomes: Object.keys(io.task.outcomes),
     planFile: f.plan,
     planSchemaFile: f.planSchema
   };
-  writeFileSync2(f.prompt, buildPrompt(promptInput));
+  writeFileSync3(f.prompt, buildPrompt(promptInput));
   saveState(io, { promptInput, batchNumbers, agentStatus: "not-run", turnsRun: 0 });
   if (io.task.hooks?.before) {
     await io.runHook(io.task.hooks.before, { FACTORY_TASK: io.task.name, FACTORY_WORK_DIR: io.workDir });
@@ -16468,7 +16579,7 @@ async function runTurn(io, turn) {
   const state = loadState(io);
   if (turn > io.task.turns || !needsAnotherRound(state, turn)) return;
   const f = files(io.workDir);
-  if (turn > 1) writeFileSync2(f.prompt, buildPrompt({ ...state.promptInput, checkFailure: state.checkFailure }));
+  if (turn > 1) writeFileSync3(f.prompt, buildPrompt({ ...state.promptInput, checkFailure: state.checkFailure }));
   const adapter = io.adapters[io.task.agent];
   if (!adapter) {
     io.log(`::error::no adapter named ${io.task.agent}`);
@@ -16489,7 +16600,7 @@ async function runTurn(io, turn) {
     turn,
     task: io.task.name
   });
-  saveState(io, { ...state, agentStatus: result.status, checksPassed: void 0, turnsRun: turn });
+  saveState(io, { ...state, agentStatus: result.status, checksPassed: void 0, turnsRun: turn, usage: addUsage(state.usage, result.usage) });
 }
 async function runChecks(io, turn, checkEnv) {
   const state = loadState(io);
@@ -16512,17 +16623,18 @@ ${scrub(output, values).split("\n").slice(-200).join("\n")}`;
 }
 async function handoff(io) {
   const f = files(io.workDir);
-  const state = existsSync5(f.state) ? loadState(io) : void 0;
-  mkdirSync3(f.handoff, { recursive: true });
+  const state = existsSync6(f.state) ? loadState(io) : void 0;
+  mkdirSync4(f.handoff, { recursive: true });
   const status = state?.agentStatus === "not-run" || !state ? "failed" : state.agentStatus;
   const meta = {
     agentStatus: status,
     checksPassed: state?.checksPassed !== false || !io.task.checksGate,
-    batchNumbers: state?.batchNumbers
+    batchNumbers: state?.batchNumbers,
+    usage: state?.usage
   };
-  writeFileSync2(join5(f.handoff, "meta.json"), JSON.stringify(meta, null, 2));
-  if (existsSync5(f.plan)) copyFileSync(f.plan, join5(f.handoff, "plan.json"));
-  if (existsSync5(f.transcript)) copyFileSync(f.transcript, join5(f.handoff, "transcript.ndjson"));
+  writeFileSync3(join6(f.handoff, "meta.json"), JSON.stringify(meta, null, 2));
+  if (existsSync6(f.plan)) copyFileSync(f.plan, join6(f.handoff, "plan.json"));
+  if (io.uploadTranscript && existsSync6(f.transcript)) copyFileSync(f.transcript, join6(f.handoff, "transcript.ndjson"));
   const run3 = (...args) => git("git", ["-c", "user.name=actions-factory", "-c", "user.email=actions-factory@users.noreply.github.com", ...args], {
     cwd: io.checkout
   });
@@ -16531,7 +16643,13 @@ async function handoff(io) {
   await run3("add", "-A");
   if ((await run3("status", "--porcelain")).stdout.trim() === "") return;
   await run3("commit", "-q", "-m", `actions-factory: ${io.task.name}`);
-  await run3("bundle", "create", join5(f.handoff, "work.bundle"), `${base}..${WORK_REF}`);
+  await run3("bundle", "create", join6(f.handoff, "work.bundle"), `${base}..${WORK_REF}`);
+}
+function addUsage(a, b) {
+  if (!a) return b;
+  if (!b) return a;
+  const sum = (x, y) => x === void 0 && y === void 0 ? void 0 : (x ?? 0) + (y ?? 0);
+  return { inputTokens: sum(a.inputTokens, b.inputTokens), outputTokens: sum(a.outputTokens, b.outputTokens), costUsd: sum(a.costUsd, b.costUsd) };
 }
 function needsAnotherRound(state, turn) {
   if (turn === 1) return state.turnsRun === 0;
@@ -16565,13 +16683,15 @@ async function gatherSubject(io) {
   }
 }
 function loadState(io) {
-  return JSON.parse(readFileSync4(files(io.workDir).state, "utf8"));
+  return JSON.parse(readFileSync5(files(io.workDir).state, "utf8"));
 }
 function saveState(io, state) {
-  writeFileSync2(files(io.workDir).state, JSON.stringify(state, null, 2));
+  writeFileSync3(files(io.workDir).state, JSON.stringify(state, null, 2));
 }
 export {
   ADAPTERS,
+  CLAUDE_CODE_VERSION,
+  CLI_VERSIONS,
   COMMANDS,
   HANDOFF_ARTIFACT,
   MIN_STUB_VERSION,
@@ -16581,6 +16701,7 @@ export {
   applyRun,
   buildPrompt,
   bundledWork,
+  claudeAdapter,
   gitFetcher,
   gitHubApi,
   handoff,

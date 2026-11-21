@@ -1,7 +1,8 @@
+import { claudeAdapter } from "./claude.js";
 import { fakeAdapter } from "./fake.js";
 import type { Adapter } from "./types.js";
 
 /** Every adapter this release ships, by `agent:` name. */
-export const ADAPTERS: Record<string, Adapter> = { fake: fakeAdapter };
+export const ADAPTERS: Record<string, Adapter> = { claude: claudeAdapter(), fake: fakeAdapter };
 
 export type { Adapter, AdapterInput, AdapterOutput } from "./types.js";
