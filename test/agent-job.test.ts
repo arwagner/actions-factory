@@ -48,6 +48,7 @@ function setup(files: Record<string, string>, task: Partial<AgentTask> = {}): Ag
       hookEnvs.push(env);
     },
     log: (line) => logs.push(line),
+    env: {},
   };
 }
 
@@ -74,7 +75,15 @@ describe("the agent job", () => {
 
     expect(prompt(io)).toContain("Add a widget");
     expect(hookEnvs).toEqual([{ FACTORY_TASK: "implement", FACTORY_WORK_DIR: io.workDir }]);
-    expect(meta(io)).toEqual({ agentStatus: "ok", checksPassed: true, usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 } });
+    expect(meta(io)).toEqual({
+      agentStatus: "ok",
+      checksPassed: true,
+      usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 },
+      turnsRun: 1,
+      agentSeconds: expect.any(Number),
+      checks: [],
+      transcript: true,
+    });
     expect(JSON.parse(readFileSync(join(io.workDir, "handoff/plan.json"), "utf8"))).toEqual({ outcome: "done" });
     const bundle = join(io.workDir, "handoff/work.bundle");
     expect(git(io.checkout, "bundle", "list-heads", bundle)).toContain("refs/heads/factory-work");
@@ -108,7 +117,12 @@ describe("the agent job", () => {
 
     expect(prompt(io)).toContain("not fixed yet");
     expect(JSON.parse(readFileSync(join(io.workDir, "transcript.ndjson"), "utf8")).turn).toBe(2);
-    expect(meta(io)).toMatchObject({ agentStatus: "ok", checksPassed: true });
+    expect(meta(io)).toMatchObject({
+      agentStatus: "ok",
+      checksPassed: true,
+      turnsRun: 2,
+      checks: [{ command: expect.stringContaining("grep -q yes"), ok: true, seconds: expect.any(Number) }],
+    });
   });
 
   it("masks check secrets before running checks, gives them to the check only, and scrubs kept output", async () => {
@@ -139,6 +153,27 @@ describe("the agent job", () => {
     await runChecks(ungated, 1, undefined);
     await handoff(ungated);
     expect(meta(ungated).checksPassed).toBe(true);
+  });
+
+  it("stops before the CLI starts when the agent has no credential, naming the secrets to set", async () => {
+    let ran = false;
+    const keyed = { name: "codex", credentials: ["OPENAI_API_KEY", "CODEX_ACCESS_TOKEN"], run: async () => ((ran = true), { status: "ok" as const }), ping: async () => ({ ok: true, detail: "" }) };
+    const io = { ...setup({}, { agent: "codex" }), adapters: { codex: keyed } };
+
+    await prepare(io);
+    await runTurn(io, 1);
+    await handoff(io);
+
+    expect(ran).toBe(false);
+    expect(meta(io)).toMatchObject({
+      agentStatus: "failed",
+      agentError: "the codex agent has no credential. Set the `OPENAI_API_KEY` or `CODEX_ACCESS_TOKEN` secret.",
+    });
+
+    const withKey = { ...setup({}, { agent: "codex" }), adapters: { codex: keyed }, env: { CODEX_ACCESS_TOKEN: "t" } };
+    await prepare(withKey);
+    await runTurn(withKey, 1);
+    expect(ran).toBe(true);
   });
 
   it("keeps commits the agent made itself, measured from where the job started", async () => {

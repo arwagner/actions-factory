@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { gitFetcher } from "../config/fetch.js";
 import { loadConfig } from "../config/load.js";
@@ -8,6 +8,7 @@ import type { Decision } from "../router/route.js";
 import { type ApplyTask, applyRun } from "./apply.js";
 import { bundledWork } from "./bundle.js";
 import type { HandoffMeta } from "./handoff.js";
+import { renderApplySummary } from "./summary.js";
 
 /** The apply job's entrypoint: wires `applyRun` to the Actions environment. */
 async function main(): Promise<void> {
@@ -35,6 +36,7 @@ async function main(): Promise<void> {
   const readJson = (path: string) => (existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : undefined);
   const meta: HandoffMeta = readJson(join(handoff, "meta.json")) ?? { agentStatus: "failed", checksPassed: false };
   const server = env("GITHUB_SERVER_URL") ?? "https://github.com";
+  const runUrl = `${server}/${owner}/${repo}/actions/runs/${required("GITHUB_RUN_ID")}`;
 
   const result = await applyRun({
     taskName: decision.task,
@@ -44,17 +46,19 @@ async function main(): Promise<void> {
     planSchema: task.planSchema ? readJson(task.planSchema) : undefined,
     plan: readJson(join(handoff, "plan.json")),
     agentStatus: meta.agentStatus,
+    agentError: meta.agentError,
     checksPassed: meta.checksPassed,
     git: bundledWork({ checkout, bundle: join(handoff, "work.bundle"), remote: `${server}/${owner}/${repo}`, token }),
     api: gitHubApi(token, owner, repo, env("GITHUB_API_URL")),
     runId: required("GITHUB_RUN_ID"),
-    runUrl: `${server}/${owner}/${repo}/actions/runs/${required("GITHUB_RUN_ID")}`,
+    runUrl,
     assignee: loaded.config.assignee as string | undefined,
     prsGetFactoryReview: Object.values(loaded.config.tasks as Record<string, ApplyTask>).some(
       (t) => t.subject === "pr" && t.label !== undefined && !t.writes.merge,
     ),
     runHook: (path, hookEnv) => runHook(path, { ...hookEnv, FACTORY_TOKEN: token, GH_TOKEN: token }, checkout),
   });
+  appendFileSync(required("GITHUB_STEP_SUMMARY"), `${renderApplySummary({ taskName: decision.task, result, meta, runUrl })}\n`);
   if (!result.ok) {
     console.log(`::error title=actions-factory::${escape(result.reason)}`);
     process.exitCode = 1;

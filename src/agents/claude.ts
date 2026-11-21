@@ -1,8 +1,7 @@
-import { execFile, spawn } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { promisify } from "node:util";
+import { agentEnv, installPinned as install, runCli } from "./cli.js";
 import { scrubValues } from "./scrub.js";
 import type { Adapter, AdapterOutput } from "./types.js";
 
@@ -10,9 +9,6 @@ import type { Adapter, AdapterOutput } from "./types.js";
 export const CLAUDE_CODE_VERSION = "2.1.319";
 
 const CREDENTIALS = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"];
-
-/** Never reach the agent, whatever the step's environment holds (§9). */
-const WITHHELD = ["GITHUB_TOKEN", "GH_TOKEN", "FACTORY_TOKEN", "FACTORY_CHECK_ENV", "ACTIONS_RUNTIME_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_TOKEN"];
 
 export interface ClaudeOptions {
   /** Returns the path of the `claude` binary, installing the pinned version if needed. */
@@ -29,8 +25,7 @@ export function claudeAdapter(options: ClaudeOptions = {}): Adapter {
     name: "claude",
     credentials: CREDENTIALS,
     async ping() {
-      const env = { ...process.env };
-      for (const name of WITHHELD) delete env[name];
+      const env = agentEnv();
       const secrets = CREDENTIALS.map((name) => process.env[name]).filter((v): v is string => Boolean(v));
       const { code, stdout, timedOut } = await runCli(await install(), ["-p", "--output-format", "json", "--max-turns", "1"], {
         cwd: mkdtempSync(join(tmpdir(), "factory-doctor-")),
@@ -59,8 +54,7 @@ export function claudeAdapter(options: ClaudeOptions = {}): Adapter {
       if (input.permission === "read-only") args.push("--restricted", "--disallowedTools", "Edit", "Write", "NotebookEdit");
       if (input.model) args.push("--model", input.model);
 
-      const env = { ...process.env };
-      for (const name of WITHHELD) delete env[name];
+      const env = agentEnv();
       const secrets = CREDENTIALS.map((name) => process.env[name]).filter((v): v is string => Boolean(v));
 
       const { code, stdout, timedOut } = await runCli(await install(), args, {
@@ -103,51 +97,6 @@ function lastResult(ndjson: string): ResultEvent | undefined {
   return undefined;
 }
 
-function runCli(
-  binary: string,
-  args: string[],
-  opts: { cwd: string; env: NodeJS.ProcessEnv; stdin: string; timeoutMs: number },
-): Promise<{ code: number; stdout: string; timedOut: boolean }> {
-  return new Promise((resolve, reject) => {
-    // Its own process group, so a timeout also stops the tools the CLI started.
-    const child = spawn(binary, args, { cwd: opts.cwd, env: opts.env, stdio: ["pipe", "pipe", "inherit"], detached: true });
-    let stdout = "";
-    let timedOut = false;
-    const killGroup = (signal: NodeJS.Signals) => {
-      try {
-        process.kill(-child.pid!, signal);
-      } catch {
-        // Already gone.
-      }
-    };
-    const timer = setTimeout(() => {
-      timedOut = true;
-      killGroup("SIGTERM");
-      setTimeout(() => killGroup("SIGKILL"), 10_000).unref();
-    }, opts.timeoutMs);
-    child.stdout.on("data", (chunk: Buffer) => {
-      stdout += chunk.toString();
-    });
-    child.on("error", (error) => {
-      clearTimeout(timer);
-      reject(error);
-    });
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      resolve({ code: code ?? 1, stdout, timedOut });
-    });
-    child.stdin.end(opts.stdin);
-  });
-}
-
-/** Installs the pinned CLI once per runner tool cache; the workflow caches that folder by version. */
 async function installPinned(): Promise<string> {
-  const root = process.env.FACTORY_AGENT_CACHE ?? join(homedir(), ".factory-agents");
-  const dir = join(root, "claude", CLAUDE_CODE_VERSION);
-  const binary = join(dir, "node_modules", ".bin", "claude");
-  if (!existsSync(binary)) {
-    mkdirSync(dir, { recursive: true });
-    await promisify(execFile)("npm", ["install", "--prefix", dir, "--no-audit", "--no-fund", `@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}`]);
-  }
-  return binary;
+  return install("claude", "@anthropic-ai/claude-code", CLAUDE_CODE_VERSION, "claude");
 }

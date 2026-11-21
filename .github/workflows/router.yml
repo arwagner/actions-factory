@@ -73,6 +73,7 @@ jobs:
         id: route
         env:
           FACTORY_ROOT: ${{ steps.factory.outputs.root }}
+          FACTORY_SHA: ${{ steps.factory.outputs.sha }}
           STUB_VERSION: ${{ inputs.stub-version }}
           FACTORY_TOKEN: ${{ secrets.FACTORY_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}

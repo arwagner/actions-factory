@@ -12,6 +12,16 @@ export interface HandoffMeta {
   batchNumbers?: number[];
   /** Summed over every round, as far as the CLI reports it. */
   usage?: { inputTokens?: number; outputTokens?: number; costUsd?: number };
+  /** How many agent rounds ran. */
+  turnsRun?: number;
+  /** Seconds the agent ran, over every round. */
+  agentSeconds?: number;
+  /** The last round's checks, in order, up to the first that failed. */
+  checks?: Array<{ command: string; ok: boolean; seconds: number }>;
+  /** Why the agent failed, when the factory knows (a missing credential, say). Never holds a secret. */
+  agentError?: string;
+  /** Whether `transcript.ndjson` is in the artifact (private repos, §9). */
+  transcript?: boolean;
 }
 
 export const HANDOFF_ARTIFACT = "factory-handoff";

@@ -67,6 +67,7 @@ async function main(): Promise<void> {
       if (code !== 0) throw new Error(`the before hook exited with ${code}`);
     },
     log: (line) => console.log(line),
+    env: process.env,
   };
 
   switch (step) {

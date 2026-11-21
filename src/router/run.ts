@@ -28,6 +28,8 @@ export interface RouterIO {
   fetchRepo?: FetchRepo;
   /** Link to this run, for comments. */
   runUrl?: string;
+  /** The factory commit this run uses (`job.workflow_sha`), for the summary. */
+  factorySha?: string;
   summary: (markdown: string) => void;
   setOutput: (name: string, value: string) => void;
   /** This run's id, left out of today's run count. */
@@ -124,7 +126,7 @@ export async function runRouter(io: RouterIO): Promise<Decision> {
     await postRefusal(decision, { io, loaded, reader, writer, trigger });
   }
 
-  io.summary(summaryFor(decision, loaded, tickReport, checks));
+  io.summary(summaryFor(decision, loaded, tickReport, checks, decision.kind === "run" ? runDetails(decision, loaded, io) : undefined));
   const failed = checks?.filter((c) => !c.ok).length ?? 0;
   if (failed > 0) io.setFailed?.(`the doctor found ${failed} problem${failed === 1 ? "" : "s"}; see the run summary`);
   io.setOutput("decision", JSON.stringify(decision));
@@ -244,10 +246,36 @@ async function ensureLabels(reader: GitHubApi, writer: GitHubApi, config: Record
   }
 }
 
-function summaryFor(decision: Decision, loaded: LoadResult, tickReport?: string[], checks?: Check[]): string {
+/** The route job's half of a task run's summary (§10): what runs, on what, with which template, factory and agent. */
+function runDetails(decision: Run, loaded: LoadResult, io: RouterIO): string {
+  const repoUrl = io.runUrl?.replace(/\/actions\/runs\/.*$/, "");
+  const link = (n: number) => (repoUrl ? `[#${n}](${repoUrl}/issues/${n})` : `#${n}`);
+  const s = decision.subject;
+  const subject =
+    "number" in s
+      ? `${s.kind === "pr" ? "pull request" : "issue"} ${link(s.number)}`
+      : `${s.kind === "batch" ? `batch \`${s.query}\`` : "the repo"}${s.origin ? `, from ${link(s.origin)}` : ""}`;
+  const settings = agentJobSettings(loaded.config, decision.task);
+  const model = (((loaded.config.tasks as Record<string, { model?: string }>)[decision.task].model ?? loaded.config.model) as string | undefined) ?? "the CLI's default";
+  const version = factoryVersion(io.factoryRoot);
+  const factory = io.factorySha ? `v${version} (\`${io.factorySha.slice(0, 7)}\`)` : `v${version}`;
+  const cli = settings.cliVersion === "none" ? "" : ` ${settings.cliVersion}`;
+  return [
+    "| | |",
+    "|---|---|",
+    `| Subject | ${subject} |`,
+    `| Task | \`${decision.task}\`, started by ${decision.label} (@${decision.actor}) |`,
+    `| Template | ${loaded.layers.map((l) => l.name).join(" → ")} |`,
+    `| Factory | ${factory} |`,
+    `| Agent | ${settings.agent}${cli}, model ${model} |`,
+  ].join("\n");
+}
+
+function summaryFor(decision: Decision, loaded: LoadResult, tickReport?: string[], checks?: Check[], details?: string): string {
   const failed = checks?.filter((c) => !c.ok).length;
   const title = checks ? `doctor: ${failed ? `${failed} problem${failed === 1 ? "" : "s"}` : "all checks pass"}` : headline(decision);
   const lines = [`### actions-factory: ${title}`, ""];
+  if (details) lines.push(details, "");
   if (checks) lines.push(renderChecks(checks), "", "The agent credentials are checked in the doctor's agent job.", "");
   if (tickReport) lines.push(tickReport.length > 0 ? tickReport.join("\n") : "Nothing is due or waiting.", "");
   for (const warning of decision.warnings) lines.push(`> [!WARNING]`, `> ${warning}`, "");

@@ -14848,88 +14848,24 @@ var require__ = __commonJS({
 // src/runner/agent-main.ts
 import { spawn as spawn2 } from "node:child_process";
 import { appendFileSync } from "node:fs";
-import { join as join6 } from "node:path";
+import { join as join9 } from "node:path";
 
 // src/agents/claude.ts
+import { cpSync, mkdirSync as mkdirSync2, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir as homedir2, tmpdir } from "node:os";
+import { join as join2 } from "node:path";
+
+// src/agents/cli.ts
 import { execFile, spawn } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { existsSync, mkdirSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-
-// src/agents/scrub.ts
-function scrubValues(text, secrets) {
-  return secrets.filter((s) => s.length >= 4).sort((a, b) => b.length - a.length).reduce((out, s) => out.split(s).join("***"), text);
-}
-
-// src/agents/claude.ts
-var CLAUDE_CODE_VERSION = "2.1.319";
-var CREDENTIALS = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"];
 var WITHHELD = ["GITHUB_TOKEN", "GH_TOKEN", "FACTORY_TOKEN", "FACTORY_CHECK_ENV", "ACTIONS_RUNTIME_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_TOKEN"];
-function claudeAdapter(options = {}) {
-  const install = options.install ?? installPinned;
-  const skillsDir = options.skillsDir ?? join(homedir(), ".claude", "skills");
-  return {
-    name: "claude",
-    credentials: CREDENTIALS,
-    async ping() {
-      const env = { ...process.env };
-      for (const name of WITHHELD) delete env[name];
-      const secrets = CREDENTIALS.map((name) => process.env[name]).filter((v) => Boolean(v));
-      const { code, stdout, timedOut } = await runCli(await install(), ["-p", "--output-format", "json", "--max-turns", "1"], {
-        cwd: mkdtempSync(join(tmpdir(), "factory-doctor-")),
-        env,
-        stdin: "Reply with the single word OK.",
-        timeoutMs: 3 * 6e4
-      });
-      if (timedOut) return { ok: false, detail: "Claude Code didn't answer within 3 minutes" };
-      let result;
-      try {
-        result = JSON.parse(stdout.trim().split("\n").pop() ?? "");
-      } catch {
-        result = void 0;
-      }
-      const said = scrubValues(String(result?.result ?? stdout).trim(), secrets).slice(0, 300);
-      if (code !== 0 || !result || result.is_error) return { ok: false, detail: `Claude Code ${CLAUDE_CODE_VERSION} failed: ${said || `exit ${code}`}` };
-      return { ok: true, detail: `Claude Code ${CLAUDE_CODE_VERSION} answered a test prompt` };
-    },
-    async run(input) {
-      for (const [name, path] of Object.entries(input.skills)) {
-        mkdirSync(skillsDir, { recursive: true });
-        cpSync(path, join(skillsDir, name), { recursive: true });
-      }
-      const args = ["-p", "--output-format", "stream-json", "--verbose", "--json-schema", readFileSync(input.planSchemaFile, "utf8")];
-      args.push("--permission-mode", "bypassPermissions");
-      if (input.permission === "read-only") args.push("--restricted", "--disallowedTools", "Edit", "Write", "NotebookEdit");
-      if (input.model) args.push("--model", input.model);
-      const env = { ...process.env };
-      for (const name of WITHHELD) delete env[name];
-      const secrets = CREDENTIALS.map((name) => process.env[name]).filter((v) => Boolean(v));
-      const { code, stdout, timedOut } = await runCli(await install(), args, {
-        cwd: input.checkout,
-        env,
-        stdin: readFileSync(input.promptFile, "utf8"),
-        timeoutMs: input.timeoutMinutes * 6e4
-      });
-      writeFileSync(input.transcriptFile, scrubValues(stdout, secrets));
-      const result = lastResult(stdout);
-      if (result?.structured_output !== void 0) writeFileSync(input.planFile, JSON.stringify(result.structured_output, null, 2));
-      const usage = result ? { inputTokens: result.usage?.input_tokens, outputTokens: result.usage?.output_tokens, costUsd: result.total_cost_usd } : void 0;
-      const status = timedOut ? "timed-out" : code !== 0 || !result || result.is_error ? "failed" : "ok";
-      return { status, usage };
-    }
-  };
-}
-function lastResult(ndjson) {
-  const lines = ndjson.trim().split("\n").reverse();
-  for (const line of lines) {
-    try {
-      const event = JSON.parse(line);
-      if (event.type === "result") return event;
-    } catch {
-    }
-  }
-  return void 0;
+function agentEnv(extra = {}, drop = []) {
+  const env = { ...process.env };
+  for (const name of [...WITHHELD, ...drop]) delete env[name];
+  return { ...env, ...extra };
 }
 function runCli(binary, args, opts) {
   return new Promise((resolve2, reject) => {
@@ -14961,20 +14897,284 @@ function runCli(binary, args, opts) {
     child.stdin.end(opts.stdin);
   });
 }
-async function installPinned() {
+async function installPinned(agent, pkg, version, bin) {
   const root = process.env.FACTORY_AGENT_CACHE ?? join(homedir(), ".factory-agents");
-  const dir = join(root, "claude", CLAUDE_CODE_VERSION);
-  const binary = join(dir, "node_modules", ".bin", "claude");
+  const dir = join(root, agent, version);
+  const binary = join(dir, "node_modules", ".bin", bin);
   if (!existsSync(binary)) {
     mkdirSync(dir, { recursive: true });
-    await promisify(execFile)("npm", ["install", "--prefix", dir, "--no-audit", "--no-fund", `@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}`]);
+    await promisify(execFile)("npm", ["install", "--prefix", dir, "--no-audit", "--no-fund", `${pkg}@${version}`]);
   }
   return binary;
 }
+function jsonLines(ndjson) {
+  const events = [];
+  for (const line of ndjson.split("\n")) {
+    if (!line.trim().startsWith("{")) continue;
+    try {
+      events.push(JSON.parse(line));
+    } catch {
+    }
+  }
+  return events;
+}
+function planFromMessage(message) {
+  if (!message) return void 0;
+  const fenced = /```(?:json)?\s*\n([\s\S]*?)```/.exec(message);
+  const text = fenced ? fenced[1] : message;
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start < 0 || end < start) return void 0;
+  try {
+    return JSON.parse(text.slice(start, end + 1));
+  } catch {
+    return void 0;
+  }
+}
+var READ_ONLY_PLAN = "\n\nThis run can't write files. Don't write the plan file: end with the plan JSON as your final message, and nothing else.\n";
+
+// src/agents/scrub.ts
+function scrubValues(text, secrets) {
+  return secrets.filter((s) => s.length >= 4).sort((a, b) => b.length - a.length).reduce((out, s) => out.split(s).join("***"), text);
+}
+
+// src/agents/claude.ts
+var CLAUDE_CODE_VERSION = "2.1.319";
+var CREDENTIALS = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"];
+function claudeAdapter(options = {}) {
+  const install = options.install ?? installPinned2;
+  const skillsDir = options.skillsDir ?? join2(homedir2(), ".claude", "skills");
+  return {
+    name: "claude",
+    credentials: CREDENTIALS,
+    async ping() {
+      const env = agentEnv();
+      const secrets = CREDENTIALS.map((name) => process.env[name]).filter((v) => Boolean(v));
+      const { code, stdout, timedOut } = await runCli(await install(), ["-p", "--output-format", "json", "--max-turns", "1"], {
+        cwd: mkdtempSync(join2(tmpdir(), "factory-doctor-")),
+        env,
+        stdin: "Reply with the single word OK.",
+        timeoutMs: 3 * 6e4
+      });
+      if (timedOut) return { ok: false, detail: "Claude Code didn't answer within 3 minutes" };
+      let result;
+      try {
+        result = JSON.parse(stdout.trim().split("\n").pop() ?? "");
+      } catch {
+        result = void 0;
+      }
+      const said = scrubValues(String(result?.result ?? stdout).trim(), secrets).slice(0, 300);
+      if (code !== 0 || !result || result.is_error) return { ok: false, detail: `Claude Code ${CLAUDE_CODE_VERSION} failed: ${said || `exit ${code}`}` };
+      return { ok: true, detail: `Claude Code ${CLAUDE_CODE_VERSION} answered a test prompt` };
+    },
+    async run(input) {
+      for (const [name, path] of Object.entries(input.skills)) {
+        mkdirSync2(skillsDir, { recursive: true });
+        cpSync(path, join2(skillsDir, name), { recursive: true });
+      }
+      const args = ["-p", "--output-format", "stream-json", "--verbose", "--json-schema", readFileSync(input.planSchemaFile, "utf8")];
+      args.push("--permission-mode", "bypassPermissions");
+      if (input.permission === "read-only") args.push("--restricted", "--disallowedTools", "Edit", "Write", "NotebookEdit");
+      if (input.model) args.push("--model", input.model);
+      const env = agentEnv();
+      const secrets = CREDENTIALS.map((name) => process.env[name]).filter((v) => Boolean(v));
+      const { code, stdout, timedOut } = await runCli(await install(), args, {
+        cwd: input.checkout,
+        env,
+        stdin: readFileSync(input.promptFile, "utf8"),
+        timeoutMs: input.timeoutMinutes * 6e4
+      });
+      writeFileSync(input.transcriptFile, scrubValues(stdout, secrets));
+      const result = lastResult(stdout);
+      if (result?.structured_output !== void 0) writeFileSync(input.planFile, JSON.stringify(result.structured_output, null, 2));
+      const usage3 = result ? { inputTokens: result.usage?.input_tokens, outputTokens: result.usage?.output_tokens, costUsd: result.total_cost_usd } : void 0;
+      const status = timedOut ? "timed-out" : code !== 0 || !result || result.is_error ? "failed" : "ok";
+      return { status, usage: usage3 };
+    }
+  };
+}
+function lastResult(ndjson) {
+  const lines = ndjson.trim().split("\n").reverse();
+  for (const line of lines) {
+    try {
+      const event = JSON.parse(line);
+      if (event.type === "result") return event;
+    } catch {
+    }
+  }
+  return void 0;
+}
+async function installPinned2() {
+  return installPinned("claude", "@anthropic-ai/claude-code", CLAUDE_CODE_VERSION, "claude");
+}
+
+// src/agents/codex.ts
+import { execFile as execFile2 } from "node:child_process";
+import { cpSync as cpSync2, existsSync as existsSync2, mkdtempSync as mkdtempSync2, readFileSync as readFileSync2, rmSync, writeFileSync as writeFileSync2 } from "node:fs";
+import { tmpdir as tmpdir2 } from "node:os";
+import { dirname, join as join3 } from "node:path";
+var CODEX_VERSION = "0.167.0";
+var CREDENTIALS2 = ["OPENAI_API_KEY", "CODEX_ACCESS_TOKEN"];
+function codexAdapter(options = {}) {
+  const install = options.install ?? (() => installPinned("codex", "@openai/codex", CODEX_VERSION, "codex"));
+  async function session(binary) {
+    const home = mkdtempSync2(join3(process.env.RUNNER_TEMP ?? tmpdir2(), "factory-codex-"));
+    const apiKey = process.env.OPENAI_API_KEY;
+    const accessToken = process.env.CODEX_ACCESS_TOKEN;
+    const secrets = [apiKey, accessToken].filter((v) => Boolean(v));
+    const env = agentEnv({ CODEX_HOME: home, ...apiKey ? { CODEX_API_KEY: apiKey } : {} }, CREDENTIALS2);
+    if (!apiKey && accessToken) await login(binary, env, accessToken);
+    return { home, env, secrets };
+  }
+  return {
+    name: "codex",
+    credentials: CREDENTIALS2,
+    async run(input) {
+      const binary = await install();
+      const { home, env, secrets } = await session(binary);
+      try {
+        for (const [name, path] of Object.entries(input.skills)) cpSync2(path, join3(home, "skills", name), { recursive: true });
+        const lastMessage2 = join3(home, "last-message.txt");
+        const args = ["exec", "--json", "--skip-git-repo-check", "-o", lastMessage2];
+        if (input.permission === "read-only") args.push("--sandbox", "read-only");
+        else args.push("--dangerously-bypass-approvals-and-sandbox", "--add-dir", dirname(input.planFile));
+        if (input.model) args.push("--model", input.model);
+        args.push("-");
+        const prompt = readFileSync2(input.promptFile, "utf8") + (input.permission === "read-only" ? READ_ONLY_PLAN : "");
+        const { code, stdout, timedOut } = await runCli(binary, args, { cwd: input.checkout, env, stdin: prompt, timeoutMs: input.timeoutMinutes * 6e4 });
+        writeFileSync2(input.transcriptFile, scrubValues(stdout, secrets));
+        if (!existsSync2(input.planFile)) {
+          const plan = planFromMessage(existsSync2(lastMessage2) ? readFileSync2(lastMessage2, "utf8") : void 0);
+          if (plan !== void 0) writeFileSync2(input.planFile, JSON.stringify(plan, null, 2));
+        }
+        const events = jsonLines(stdout);
+        const failed = events.some((e) => e.type === "turn.failed");
+        const status = timedOut ? "timed-out" : code !== 0 || failed ? "failed" : "ok";
+        return { status, usage: usage(events) };
+      } finally {
+        rmSync(home, { recursive: true, force: true });
+      }
+    },
+    async ping() {
+      const binary = await install();
+      const { home, env, secrets } = await session(binary);
+      try {
+        const args = ["exec", "--json", "--skip-git-repo-check", "--sandbox", "read-only", "-"];
+        const { code, stdout, timedOut } = await runCli(binary, args, { cwd: home, env, stdin: "Reply with the single word OK.", timeoutMs: 3 * 6e4 });
+        if (timedOut) return { ok: false, detail: "Codex didn't answer within 3 minutes" };
+        const events = jsonLines(stdout);
+        if (code === 0 && events.some((e) => e.type === "turn.completed")) return { ok: true, detail: `Codex ${CODEX_VERSION} answered a test prompt` };
+        const error = [...events].reverse().find((e) => typeof e.message === "string")?.message;
+        return { ok: false, detail: `Codex ${CODEX_VERSION} failed: ${scrubValues(error ?? `exit ${code}`, secrets).slice(0, 300)}` };
+      } finally {
+        rmSync(home, { recursive: true, force: true });
+      }
+    }
+  };
+}
+function login(binary, env, token) {
+  return new Promise((resolve2, reject) => {
+    const child = execFile2(
+      binary,
+      ["login", "--with-access-token"],
+      { env },
+      (error) => error ? reject(new Error("codex login --with-access-token failed; check CODEX_ACCESS_TOKEN")) : resolve2()
+    );
+    child.stdin?.end(token);
+  });
+}
+function usage(events) {
+  let input;
+  let output;
+  for (const e of events) {
+    if (e.type !== "turn.completed") continue;
+    const u = e.usage;
+    if (u?.input_tokens !== void 0) input = (input ?? 0) + u.input_tokens;
+    if (u?.output_tokens !== void 0) output = (output ?? 0) + u.output_tokens;
+  }
+  return input === void 0 && output === void 0 ? void 0 : { inputTokens: input, outputTokens: output };
+}
+
+// src/agents/copilot.ts
+import { cpSync as cpSync3, existsSync as existsSync3, mkdtempSync as mkdtempSync3, readFileSync as readFileSync3, rmSync as rmSync2, writeFileSync as writeFileSync3 } from "node:fs";
+import { tmpdir as tmpdir3 } from "node:os";
+import { dirname as dirname2, join as join4 } from "node:path";
+var COPILOT_VERSION = "1.0.107";
+var CREDENTIALS3 = ["COPILOT_GITHUB_TOKEN"];
+var BASE = ["--output-format", "json", "--no-auto-update", "--no-ask-user", "--disable-builtin-mcps", "--secret-env-vars", "COPILOT_GITHUB_TOKEN"];
+function copilotAdapter(options = {}) {
+  const install = options.install ?? (() => installPinned("copilot", "@github/copilot", COPILOT_VERSION, "copilot"));
+  const secrets = () => CREDENTIALS3.map((n) => process.env[n]).filter((v) => Boolean(v));
+  return {
+    name: "copilot",
+    credentials: CREDENTIALS3,
+    async run(input) {
+      const binary = await install();
+      const home = mkdtempSync3(join4(process.env.RUNNER_TEMP ?? tmpdir3(), "factory-copilot-"));
+      try {
+        for (const [name, path] of Object.entries(input.skills)) cpSync3(path, join4(home, "skills", name), { recursive: true });
+        const prompt = readFileSync3(input.promptFile, "utf8") + (input.permission === "read-only" ? READ_ONLY_PLAN : "");
+        const args = ["-p", prompt, ...BASE, "--allow-all-tools", "--add-dir", dirname2(input.planFile)];
+        if (input.permission === "read-only") args.push("--deny-tool", "write");
+        if (input.model) args.push("--model", input.model);
+        const { code, stdout, timedOut } = await runCli(binary, args, {
+          cwd: input.checkout,
+          env: agentEnv({ COPILOT_HOME: home }),
+          stdin: "",
+          timeoutMs: input.timeoutMinutes * 6e4
+        });
+        writeFileSync3(input.transcriptFile, scrubValues(stdout, secrets()));
+        const events = jsonLines(stdout);
+        if (!existsSync3(input.planFile)) {
+          const plan = planFromMessage(lastMessage(events));
+          if (plan !== void 0) writeFileSync3(input.planFile, JSON.stringify(plan, null, 2));
+        }
+        const status = timedOut ? "timed-out" : code !== 0 ? "failed" : "ok";
+        return { status, usage: usage2(events) };
+      } finally {
+        rmSync2(home, { recursive: true, force: true });
+      }
+    },
+    async ping() {
+      const binary = await install();
+      const home = mkdtempSync3(join4(process.env.RUNNER_TEMP ?? tmpdir3(), "factory-copilot-"));
+      try {
+        const { code, stdout, timedOut } = await runCli(binary, ["-p", "Reply with the single word OK.", ...BASE], {
+          cwd: home,
+          env: agentEnv({ COPILOT_HOME: home }),
+          stdin: "",
+          timeoutMs: 3 * 6e4
+        });
+        if (timedOut) return { ok: false, detail: "Copilot didn't answer within 3 minutes" };
+        if (code === 0) return { ok: true, detail: `Copilot CLI ${COPILOT_VERSION} answered a test prompt` };
+        const said = scrubValues(stdout.trim().split("\n").slice(-3).join(" "), secrets()).slice(0, 300);
+        return { ok: false, detail: `Copilot CLI ${COPILOT_VERSION} failed: ${said || `exit ${code}`}` };
+      } finally {
+        rmSync2(home, { recursive: true, force: true });
+      }
+    }
+  };
+}
+function lastMessage(events) {
+  const messages = events.filter((e) => e.type === "assistant.message");
+  const data = messages.at(-1)?.data;
+  return typeof data?.content === "string" ? data.content : void 0;
+}
+function usage2(events) {
+  let input;
+  let output;
+  for (const e of events) {
+    if (e.type !== "assistant.usage") continue;
+    const d = e.data;
+    if (typeof d?.inputTokens === "number") input = (input ?? 0) + d.inputTokens;
+    if (typeof d?.outputTokens === "number") output = (output ?? 0) + d.outputTokens;
+  }
+  return input === void 0 && output === void 0 ? void 0 : { inputTokens: input, outputTokens: output };
+}
 
 // src/agents/fake.ts
-import { existsSync as existsSync2, mkdirSync as mkdirSync2, readFileSync as readFileSync2, writeFileSync as writeFileSync2 } from "node:fs";
-import { dirname, join as join2 } from "node:path";
+import { existsSync as existsSync4, mkdirSync as mkdirSync3, readFileSync as readFileSync4, writeFileSync as writeFileSync4 } from "node:fs";
+import { dirname as dirname3, join as join5 } from "node:path";
 var fakeAdapter = {
   name: "fake",
   credentials: [],
@@ -14982,42 +15182,42 @@ var fakeAdapter = {
     return { ok: true, detail: "the fake agent needs no credential" };
   },
   async run(input) {
-    const dir = join2(input.checkout, ".factory/fake");
-    const perTurn = join2(dir, `${input.task}.turn${input.turn}.json`);
-    const file = existsSync2(perTurn) ? perTurn : join2(dir, `${input.task}.json`);
-    if (!existsSync2(file)) {
-      writeFileSync2(input.transcriptFile, `${JSON.stringify({ type: "error", message: `no fake script at ${file}` })}
+    const dir = join5(input.checkout, ".factory/fake");
+    const perTurn = join5(dir, `${input.task}.turn${input.turn}.json`);
+    const file = existsSync4(perTurn) ? perTurn : join5(dir, `${input.task}.json`);
+    if (!existsSync4(file)) {
+      writeFileSync4(input.transcriptFile, `${JSON.stringify({ type: "error", message: `no fake script at ${file}` })}
 `);
       return { status: "failed" };
     }
-    const script = JSON.parse(readFileSync2(file, "utf8"));
+    const script = JSON.parse(readFileSync4(file, "utf8"));
     for (const [path, content] of Object.entries(script.files ?? {})) {
       if (input.permission === "read-only") break;
-      mkdirSync2(dirname(join2(input.checkout, path)), { recursive: true });
-      writeFileSync2(join2(input.checkout, path), content);
+      mkdirSync3(dirname3(join5(input.checkout, path)), { recursive: true });
+      writeFileSync4(join5(input.checkout, path), content);
     }
-    writeFileSync2(input.planFile, JSON.stringify(script.plan, null, 2));
-    writeFileSync2(input.transcriptFile, `${JSON.stringify({ type: "fake", script: file, turn: input.turn })}
+    writeFileSync4(input.planFile, JSON.stringify(script.plan, null, 2));
+    writeFileSync4(input.transcriptFile, `${JSON.stringify({ type: "fake", script: file, turn: input.turn })}
 `);
     return { status: "ok", usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 } };
   }
 };
 
 // src/agents/index.ts
-var ADAPTERS = { claude: claudeAdapter(), fake: fakeAdapter };
+var ADAPTERS = { claude: claudeAdapter(), codex: codexAdapter(), copilot: copilotAdapter(), fake: fakeAdapter };
 
 // src/config/fetch.ts
-import { execFile as execFile2 } from "node:child_process";
-import { existsSync as existsSync3, mkdirSync as mkdirSync3, mkdtempSync as mkdtempSync2, renameSync, rmSync } from "node:fs";
-import { dirname as dirname2, join as join3 } from "node:path";
+import { execFile as execFile3 } from "node:child_process";
+import { existsSync as existsSync5, mkdirSync as mkdirSync4, mkdtempSync as mkdtempSync4, renameSync, rmSync as rmSync3 } from "node:fs";
+import { dirname as dirname4, join as join6 } from "node:path";
 import { promisify as promisify2 } from "node:util";
-var run = promisify2(execFile2);
+var run = promisify2(execFile3);
 function gitFetcher({ cacheDir, token, baseUrl = "https://github.com" }) {
   return async ({ owner, repo, ref }) => {
-    const dir = join3(cacheDir, owner, repo, encodeURIComponent(ref));
-    if (existsSync3(dir)) return dir;
-    mkdirSync3(dirname2(dir), { recursive: true });
-    const work = mkdtempSync2(`${dir}.partial-`);
+    const dir = join6(cacheDir, owner, repo, encodeURIComponent(ref));
+    if (existsSync5(dir)) return dir;
+    mkdirSync4(dirname4(dir), { recursive: true });
+    const work = mkdtempSync4(`${dir}.partial-`);
     const auth = token ? ["-c", `http.extraHeader=Authorization: Basic ${Buffer.from(`x-access-token:${token}`).toString("base64")}`] : [];
     const git2 = (...args) => run("git", args, { cwd: work });
     try {
@@ -15025,10 +15225,10 @@ function gitFetcher({ cacheDir, token, baseUrl = "https://github.com" }) {
       await git2(...auth, "fetch", "-q", "--depth", "1", "--no-tags", `${baseUrl}/${owner}/${repo}`, ref);
       await git2("-c", "advice.detachedHead=false", "checkout", "-q", "FETCH_HEAD");
     } catch (error) {
-      rmSync(work, { recursive: true, force: true });
+      rmSync3(work, { recursive: true, force: true });
       throw new Error(reason(error, ref, token));
     }
-    rmSync(join3(work, ".git"), { recursive: true, force: true });
+    rmSync3(join6(work, ".git"), { recursive: true, force: true });
     renameSync(work, dir);
     return dir;
   };
@@ -15042,8 +15242,8 @@ function reason(error, ref, token) {
 
 // src/config/load.ts
 var import_yaml = __toESM(require_dist(), 1);
-import { existsSync as existsSync4, readFileSync as readFileSync3, statSync } from "node:fs";
-import { isAbsolute, join as join4, relative, resolve } from "node:path";
+import { existsSync as existsSync6, readFileSync as readFileSync5, statSync } from "node:fs";
+import { isAbsolute, join as join7, relative, resolve } from "node:path";
 
 // src/config/validate.ts
 var import__ = __toESM(require__(), 1);
@@ -15661,7 +15861,7 @@ var StackError = class extends Error {
 async function loadConfig(options) {
   const factoryLayer = { name: "factory.yml", dir: options.clientRoot };
   try {
-    const factoryData = readYaml(join4(options.clientRoot, "factory.yml"), "", factoryLayer.name);
+    const factoryData = readYaml(join7(options.clientRoot, "factory.yml"), "", factoryLayer.name);
     const clientPlace = {
       root: options.clientRoot,
       rootLabel: ".",
@@ -15701,8 +15901,8 @@ async function resolveStack(ref, from, options, referrer, field, seen = []) {
   if (seen.length >= MAX_DEPTH) {
     throw new StackError(field, referrer, `templates extend more than ${MAX_DEPTH} deep`);
   }
-  const manifest = join4(place.dir, "template.yml");
-  if (!existsSync4(manifest)) {
+  const manifest = join7(place.dir, "template.yml");
+  if (!existsSync6(manifest)) {
     throw new StackError(field, referrer, `no template at ${JSON.stringify(ref)} (expected ${name}/template.yml)`);
   }
   const data = readYaml(manifest, "", name);
@@ -15732,11 +15932,11 @@ async function locate(ref, from, options, referrer, field) {
       throw new StackError(field, referrer, `couldn't fetch ${owner}/${repo}@${gitRef}: ${reason2}`);
     }
     const label2 = (p) => `${owner}/${repo}${p ? `/${p}` : ""}@${gitRef}`;
-    return { root: root2, rootLabel: `${owner}/${repo}@${gitRef}`, dir: join4(root2, path), label: label2 };
+    return { root: root2, rootLabel: `${owner}/${repo}@${gitRef}`, dir: join7(root2, path), label: label2 };
   }
   const root = options.factoryRoot;
   const label = (p) => p.replace(/^templates\//, "");
-  return { root, rootLabel: "@factory", dir: join4(root, "templates", ref), label };
+  return { root, rootLabel: "@factory", dir: join7(root, "templates", ref), label };
 }
 function checkTemplates(templates, schemaVersion) {
   const errors = [];
@@ -15784,7 +15984,7 @@ function prepareLayer(data, layer) {
 function readInstructions(value, dir) {
   if (value.includes("\n")) return value;
   const path = resolve(dir, value);
-  return existsSync4(path) && statSync(path).isFile() ? readFileSync3(path, "utf8") : value;
+  return existsSync6(path) && statSync(path).isFile() ? readFileSync5(path, "utf8") : value;
 }
 function appends(path) {
   return path === "instructions" || /^tasks\.[^.]+\.instructions$/.test(path);
@@ -15821,7 +16021,7 @@ function forget(provenance, path) {
 function readYaml(file, path, layer) {
   let data;
   try {
-    data = (0, import_yaml.parse)(readFileSync3(file, "utf8"));
+    data = (0, import_yaml.parse)(readFileSync5(file, "utf8"));
   } catch (error) {
     const reason2 = error instanceof Error ? error.message : String(error);
     throw new StackError(path, layer, `couldn't read ${relativeName(file)}: ${reason2}`);
@@ -16011,15 +16211,15 @@ function gitHubApi(token, owner, repo, baseUrl = "https://api.github.com") {
 }
 
 // src/runner/agent-job.ts
-import { execFile as execFile4 } from "node:child_process";
-import { copyFileSync, existsSync as existsSync5, mkdirSync as mkdirSync4, readFileSync as readFileSync4, writeFileSync as writeFileSync3 } from "node:fs";
-import { join as join5 } from "node:path";
+import { execFile as execFile5 } from "node:child_process";
+import { copyFileSync, existsSync as existsSync7, mkdirSync as mkdirSync5, readFileSync as readFileSync6, writeFileSync as writeFileSync5 } from "node:fs";
+import { join as join8 } from "node:path";
 import { promisify as promisify4 } from "node:util";
 
 // src/runner/bundle.ts
-import { execFile as execFile3 } from "node:child_process";
+import { execFile as execFile4 } from "node:child_process";
 import { promisify as promisify3 } from "node:util";
-var run2 = promisify3(execFile3);
+var run2 = promisify3(execFile4);
 var WORK_REF = "factory-work";
 
 // src/runner/check-env.ts
@@ -16177,24 +16377,24 @@ function renderItem(item) {
 }
 
 // src/runner/agent-job.ts
-var git = promisify4(execFile4);
+var git = promisify4(execFile5);
 var files = (workDir) => ({
-  state: join5(workDir, "state.json"),
-  prompt: join5(workDir, "prompt.md"),
-  planSchema: join5(workDir, "plan.schema.json"),
-  plan: join5(workDir, "plan.json"),
-  transcript: join5(workDir, "transcript.ndjson"),
-  handoff: join5(workDir, "handoff")
+  state: join8(workDir, "state.json"),
+  prompt: join8(workDir, "prompt.md"),
+  planSchema: join8(workDir, "plan.schema.json"),
+  plan: join8(workDir, "plan.json"),
+  transcript: join8(workDir, "transcript.ndjson"),
+  handoff: join8(workDir, "handoff")
 });
 async function prepare(io) {
   const f = files(io.workDir);
-  mkdirSync4(io.workDir, { recursive: true });
+  mkdirSync5(io.workDir, { recursive: true });
   const { items, batchNumbers } = await gatherSubject(io);
-  const planSchema = io.task.planSchema ? JSON.parse(readFileSync4(io.task.planSchema, "utf8")) : void 0;
+  const planSchema = io.task.planSchema ? JSON.parse(readFileSync6(io.task.planSchema, "utf8")) : void 0;
   const ctxSubject = io.subject.kind === "batch" ? { kind: "batch", numbers: batchNumbers ?? [] } : io.subject;
-  writeFileSync3(f.planSchema, JSON.stringify(planJsonSchema({ subject: ctxSubject, planSchema }), null, 2));
+  writeFileSync5(f.planSchema, JSON.stringify(planJsonSchema({ subject: ctxSubject, planSchema }), null, 2));
   const promptInput = {
-    prompt: readFileSync4(io.task.prompt, "utf8"),
+    prompt: readFileSync6(io.task.prompt, "utf8"),
     instructions: io.task.instructions,
     items,
     outcomes: Object.keys(io.task.outcomes),
@@ -16202,7 +16402,7 @@ async function prepare(io) {
     planFile: f.plan,
     planSchemaFile: f.planSchema
   };
-  writeFileSync3(f.prompt, buildPrompt(promptInput));
+  writeFileSync5(f.prompt, buildPrompt(promptInput));
   const base = (await git("git", ["rev-parse", "HEAD"], { cwd: io.checkout })).stdout.trim();
   saveState(io, { base, promptInput, batchNumbers, agentStatus: "not-run", turnsRun: 0 });
   if (io.task.hooks?.before) {
@@ -16213,14 +16413,21 @@ async function runTurn(io, turn) {
   const state = loadState(io);
   if (turn > io.task.turns || !needsAnotherRound(state, turn)) return;
   const f = files(io.workDir);
-  if (turn > 1) writeFileSync3(f.prompt, buildPrompt({ ...state.promptInput, checkFailure: state.checkFailure }));
+  if (turn > 1) writeFileSync5(f.prompt, buildPrompt({ ...state.promptInput, checkFailure: state.checkFailure }));
   const adapter = io.adapters[io.task.agent];
   if (!adapter) {
     io.log(`::error::no adapter named ${io.task.agent}`);
-    saveState(io, { ...state, agentStatus: "failed", turnsRun: turn });
+    saveState(io, { ...state, agentStatus: "failed", turnsRun: turn, agentError: `this factory release has no ${io.task.agent} adapter` });
+    return;
+  }
+  if (adapter.credentials.length > 0 && !adapter.credentials.some((name) => io.env[name])) {
+    const agentError = `the ${adapter.name} agent has no credential. Set the ${adapter.credentials.map((n) => `\`${n}\``).join(" or ")} secret.`;
+    io.log(`::error::${agentError}`);
+    saveState(io, { ...state, agentStatus: "failed", turnsRun: turn, agentError });
     return;
   }
   saveState(io, { ...state, agentStatus: "timed-out", checksPassed: void 0, turnsRun: turn });
+  const started = Date.now();
   const result = await adapter.run({
     checkout: io.checkout,
     promptFile: f.prompt,
@@ -16234,7 +16441,14 @@ async function runTurn(io, turn) {
     turn,
     task: io.task.name
   });
-  saveState(io, { ...state, agentStatus: result.status, checksPassed: void 0, turnsRun: turn, usage: addUsage(state.usage, result.usage) });
+  saveState(io, {
+    ...state,
+    agentStatus: result.status,
+    checksPassed: void 0,
+    turnsRun: turn,
+    usage: addUsage(state.usage, result.usage),
+    agentSeconds: (state.agentSeconds ?? 0) + Math.round((Date.now() - started) / 1e3)
+  });
 }
 async function runChecks(io, turn, checkEnv) {
   const state = loadState(io);
@@ -16243,32 +16457,40 @@ async function runChecks(io, turn, checkEnv) {
   const { commands, warnings } = maskCommands(values);
   for (const line of [...commands, ...warnings]) io.log(line);
   let failure;
+  const results = [];
   for (const command of io.task.checks) {
     io.log(`::group::check: ${command}`);
+    const started = Date.now();
     const { code, output } = await io.runCommand(command, values);
     io.log("::endgroup::");
+    results.push({ command, ok: code === 0, seconds: Math.round((Date.now() - started) / 1e3) });
     if (code !== 0) {
       failure = `${command} exited with ${code}:
 ${scrub(output, values).split("\n").slice(-200).join("\n")}`;
       break;
     }
   }
-  saveState(io, { ...state, checksPassed: failure === void 0, checkFailure: failure });
+  saveState(io, { ...state, checksPassed: failure === void 0, checkFailure: failure, checkResults: results });
 }
 async function handoff(io) {
   const f = files(io.workDir);
-  const state = existsSync5(f.state) ? loadState(io) : void 0;
-  mkdirSync4(f.handoff, { recursive: true });
+  const state = existsSync7(f.state) ? loadState(io) : void 0;
+  mkdirSync5(f.handoff, { recursive: true });
   const status = state?.agentStatus === "not-run" || !state ? "failed" : state.agentStatus;
   const meta = {
     agentStatus: status,
     checksPassed: state?.checksPassed !== false || !io.task.checksGate,
     batchNumbers: state?.batchNumbers,
-    usage: state?.usage
+    usage: state?.usage,
+    turnsRun: state?.turnsRun,
+    agentSeconds: state?.agentSeconds,
+    checks: state?.checkResults,
+    agentError: state?.agentError,
+    transcript: io.uploadTranscript && existsSync7(f.transcript)
   };
-  writeFileSync3(join5(f.handoff, "meta.json"), JSON.stringify(meta, null, 2));
-  if (existsSync5(f.plan)) copyFileSync(f.plan, join5(f.handoff, "plan.json"));
-  if (io.uploadTranscript && existsSync5(f.transcript)) copyFileSync(f.transcript, join5(f.handoff, "transcript.ndjson"));
+  writeFileSync5(join8(f.handoff, "meta.json"), JSON.stringify(meta, null, 2));
+  if (existsSync7(f.plan)) copyFileSync(f.plan, join8(f.handoff, "plan.json"));
+  if (meta.transcript) copyFileSync(f.transcript, join8(f.handoff, "transcript.ndjson"));
   const run3 = (...args) => git("git", ["-c", "user.name=actions-factory", "-c", "user.email=actions-factory@users.noreply.github.com", ...args], {
     cwd: io.checkout
   });
@@ -16277,7 +16499,7 @@ async function handoff(io) {
   await run3("add", "-A");
   if ((await run3("status", "--porcelain")).stdout.trim() !== "") await run3("commit", "-q", "-m", `actions-factory: ${io.task.name}`);
   if ((await run3("rev-parse", "HEAD")).stdout.trim() === base) return;
-  await run3("bundle", "create", join5(f.handoff, "work.bundle"), `${base}..${WORK_REF}`);
+  await run3("bundle", "create", join8(f.handoff, "work.bundle"), `${base}..${WORK_REF}`);
 }
 function addUsage(a, b) {
   if (!a) return b;
@@ -16317,10 +16539,10 @@ async function gatherSubject(io) {
   }
 }
 function loadState(io) {
-  return JSON.parse(readFileSync4(files(io.workDir).state, "utf8"));
+  return JSON.parse(readFileSync6(files(io.workDir).state, "utf8"));
 }
 function saveState(io, state) {
-  writeFileSync3(files(io.workDir).state, JSON.stringify(state, null, 2));
+  writeFileSync5(files(io.workDir).state, JSON.stringify(state, null, 2));
 }
 
 // src/router/doctor.ts
@@ -16385,7 +16607,7 @@ async function main() {
   const loaded = await loadConfig({
     clientRoot: checkout,
     factoryRoot: required("FACTORY_ROOT"),
-    fetchRepo: gitFetcher({ cacheDir: join6(temp, "factory-templates") })
+    fetchRepo: gitFetcher({ cacheDir: join9(temp, "factory-templates") })
   });
   if (!loaded.ok) throw new Error("the factory config no longer validates");
   const config = loaded.config;
@@ -16400,7 +16622,7 @@ async function main() {
     checks: config.checks
   };
   const io = {
-    workDir: join6(temp, "factory"),
+    workDir: join9(temp, "factory"),
     checkout,
     task,
     subject: decision.subject,
@@ -16413,7 +16635,8 @@ async function main() {
       const { code } = await runStreaming(command, args, checkout, hookEnv);
       if (code !== 0) throw new Error(`the before hook exited with ${code}`);
     },
-    log: (line) => console.log(line)
+    log: (line) => console.log(line),
+    env: process.env
   };
   switch (step) {
     case "prepare":
