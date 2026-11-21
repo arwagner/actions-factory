@@ -13,3 +13,7 @@ export { COMMANDS, route, type Command, type Decision, type RefusalCode, type Ro
 export { MIN_STUB_VERSION, STUB_VERSION } from "./router/version.js";
 export { gitHubApi, type GitHubApi, type Label } from "./router/github.js";
 export { runRouter, type RouterIO } from "./router/run.js";
+export { applyRun, type ApplyIO, type ApplyResult, type ApplyTask } from "./runner/apply.js";
+export { bundledWork, WORK_REF } from "./runner/bundle.js";
+export { HANDOFF_ARTIFACT, type HandoffMeta } from "./runner/handoff.js";
+export { planJsonSchema, validatePlan, type PlanContext, type PlanError, type PlanTask } from "./runner/plan.js";

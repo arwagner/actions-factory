@@ -27,6 +27,10 @@ The agent never holds a GitHub token. It works in a checkout and writes `plan.js
 - the writes it asks for: comments, labels, a PR title and body, which issues to close;
 - any extra fields declared by `planSchema`.
 
+The writes a plan can ask for are `comment`, `labels` (`add`, `remove`), `pullRequest` (`title`, `body`), `closeIssue` (the subject issue only), `createIssues` and `merge`. Pushing isn't a plan field: the agent's changes to the checkout are the push, and the factory picks the branch.
+
+For a `batch` subject, the plan instead has `items`, one per issue: `number`, `outcome`, and that issue's `comment`, `labels` and `close`, plus `planSchema` fields. Each item is validated like a single plan, and must name an issue from the batch, once (#37).
+
 The factory validates the plan against the task. An outcome not on the list, or a write the task doesn't allow, fails the run. Then the factory makes the writes itself (section 9).
 
 ## Hooks

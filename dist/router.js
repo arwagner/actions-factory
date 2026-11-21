@@ -14893,6 +14893,39 @@ function gitHubApi(token, owner, repo, baseUrl = "https://api.github.com") {
     },
     async comment(issueNumber, body) {
       await call("POST", `/issues/${issueNumber}/comments`, { body });
+    },
+    async addLabels(issueNumber, names) {
+      if (names.length > 0) await call("POST", `/issues/${issueNumber}/labels`, { labels: names });
+    },
+    async listComments(issueNumber) {
+      const comments = [];
+      for (let page = 1; ; page++) {
+        const batch = await call("GET", `/issues/${issueNumber}/comments?per_page=100&page=${page}`);
+        comments.push(...batch.map(({ id, body }) => ({ id, body })));
+        if (batch.length < 100) return comments;
+      }
+    },
+    async updateComment(commentId, body) {
+      await call("PATCH", `/issues/comments/${commentId}`, { body });
+    },
+    async closeIssue(issueNumber) {
+      await call("PATCH", `/issues/${issueNumber}`, { state: "closed" });
+    },
+    async createIssue(issue) {
+      return (await call("POST", "/issues", issue)).number;
+    },
+    async defaultBranch() {
+      return (await call("GET", "")).default_branch;
+    },
+    async getPull(number) {
+      const pull = await call("GET", `/pulls/${number}`);
+      return { head: pull.head.ref, mergeable: pull.mergeable === true && pull.mergeable_state === "clean" };
+    },
+    async createPull(pull) {
+      return (await call("POST", "/pulls", pull)).number;
+    },
+    async mergePull(number) {
+      await call("PUT", `/pulls/${number}/merge`, { merge_method: "merge" });
     }
   };
 }

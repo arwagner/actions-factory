@@ -7430,8 +7430,8 @@ var require_json_schema_2020_12 = __commonJS({
         with$data(this, validation)
       ].forEach((sch) => this.addMetaSchema(sch, void 0, false));
       return this;
-      function with$data(ajv2, sch) {
-        return $data ? ajv2.$dataMetaSchema(sch, META_SUPPORT_DATA) : sch;
+      function with$data(ajv3, sch) {
+        return $data ? ajv3.$dataMetaSchema(sch, META_SUPPORT_DATA) : sch;
       }
     }
     exports.default = addMetaSchema2020;
@@ -7449,7 +7449,7 @@ var require__ = __commonJS({
     var discriminator_1 = require_discriminator();
     var json_schema_2020_12_1 = require_json_schema_2020_12();
     var META_SCHEMA_ID = "https://json-schema.org/draft/2020-12/schema";
-    var Ajv20202 = class extends core_1.default {
+    var Ajv20203 = class extends core_1.default {
       constructor(opts = {}) {
         super({
           ...opts,
@@ -7476,11 +7476,11 @@ var require__ = __commonJS({
         return this.opts.defaultMeta = super.defaultMeta() || (this.getSchema(META_SCHEMA_ID) ? META_SCHEMA_ID : void 0);
       }
     };
-    exports.Ajv2020 = Ajv20202;
-    module.exports = exports = Ajv20202;
-    module.exports.Ajv2020 = Ajv20202;
+    exports.Ajv2020 = Ajv20203;
+    module.exports = exports = Ajv20203;
+    module.exports.Ajv2020 = Ajv20203;
     Object.defineProperty(exports, "__esModule", { value: true });
-    exports.default = Ajv20202;
+    exports.default = Ajv20203;
     var validate_1 = require_validate();
     Object.defineProperty(exports, "KeywordCxt", { enumerable: true, get: function() {
       return validate_1.KeywordCxt;
@@ -7528,7 +7528,7 @@ var require_identity = __commonJS({
     var NODE_TYPE = /* @__PURE__ */ Symbol.for("yaml.node.type");
     var isAlias = (node) => !!node && typeof node === "object" && node[NODE_TYPE] === ALIAS;
     var isDocument = (node) => !!node && typeof node === "object" && node[NODE_TYPE] === DOC;
-    var isMap2 = (node) => !!node && typeof node === "object" && node[NODE_TYPE] === MAP;
+    var isMap4 = (node) => !!node && typeof node === "object" && node[NODE_TYPE] === MAP;
     var isPair2 = (node) => !!node && typeof node === "object" && node[NODE_TYPE] === PAIR;
     var isScalar2 = (node) => !!node && typeof node === "object" && node[NODE_TYPE] === SCALAR;
     var isSeq = (node) => !!node && typeof node === "object" && node[NODE_TYPE] === SEQ;
@@ -7564,7 +7564,7 @@ var require_identity = __commonJS({
     exports.isAlias = isAlias;
     exports.isCollection = isCollection;
     exports.isDocument = isDocument;
-    exports.isMap = isMap2;
+    exports.isMap = isMap4;
     exports.isNode = isNode;
     exports.isPair = isPair2;
     exports.isScalar = isScalar2;
@@ -11676,9 +11676,9 @@ var require_resolve_flow_collection = __commonJS({
     var blockMsg = "Block collections are not allowed within flow collections";
     var isBlock = (token) => token && (token.type === "block-map" || token.type === "block-seq");
     function resolveFlowCollection({ composeNode, composeEmptyNode }, ctx, fc, onError, tag) {
-      const isMap2 = fc.start.source === "{";
-      const fcName = isMap2 ? "flow map" : "flow sequence";
-      const NodeClass = tag?.nodeClass ?? (isMap2 ? YAMLMap.YAMLMap : YAMLSeq.YAMLSeq);
+      const isMap4 = fc.start.source === "{";
+      const fcName = isMap4 ? "flow map" : "flow sequence";
+      const NodeClass = tag?.nodeClass ?? (isMap4 ? YAMLMap.YAMLMap : YAMLSeq.YAMLSeq);
       const coll = new NodeClass(ctx.schema);
       coll.flow = true;
       const atRoot = ctx.atRoot;
@@ -11714,7 +11714,7 @@ var require_resolve_flow_collection = __commonJS({
             offset = props.end;
             continue;
           }
-          if (!isMap2 && ctx.options.strict && utilContainsNewline.containsNewline(key))
+          if (!isMap4 && ctx.options.strict && utilContainsNewline.containsNewline(key))
             onError(
               key,
               // checked by containsNewline()
@@ -11754,7 +11754,7 @@ var require_resolve_flow_collection = __commonJS({
             }
           }
         }
-        if (!isMap2 && !sep && !props.found) {
+        if (!isMap4 && !sep && !props.found) {
           const valueNode = value ? composeNode(ctx, value, props, onError) : composeEmptyNode(ctx, props.end, sep, null, props, onError);
           coll.items.push(valueNode);
           offset = valueNode.range[2];
@@ -11777,7 +11777,7 @@ var require_resolve_flow_collection = __commonJS({
             startOnNewline: false
           });
           if (valueProps.found) {
-            if (!isMap2 && !props.found && ctx.options.strict) {
+            if (!isMap4 && !props.found && ctx.options.strict) {
               if (sep)
                 for (const st of sep) {
                   if (st === valueProps.found)
@@ -11809,7 +11809,7 @@ var require_resolve_flow_collection = __commonJS({
           const pair = new Pair.Pair(keyNode, valueNode);
           if (ctx.options.keepSourceTokens)
             pair.srcToken = collItem;
-          if (isMap2) {
+          if (isMap4) {
             const map = coll;
             if (utilMapIncludes.mapIncludes(ctx, map.items, keyNode))
               onError(keyStart, "DUPLICATE_KEY", "Map keys must be unique");
@@ -11825,7 +11825,7 @@ var require_resolve_flow_collection = __commonJS({
           offset = valueNode ? valueNode.range[2] : valueProps.end;
         }
       }
-      const expectedEnd = isMap2 ? "}" : "]";
+      const expectedEnd = isMap4 ? "}" : "]";
       const [ce, ...ee] = fc.end;
       let cePos = offset;
       if (ce?.source === expectedEnd)
@@ -15818,6 +15818,39 @@ function gitHubApi(token, owner, repo, baseUrl = "https://api.github.com") {
     },
     async comment(issueNumber, body) {
       await call("POST", `/issues/${issueNumber}/comments`, { body });
+    },
+    async addLabels(issueNumber, names) {
+      if (names.length > 0) await call("POST", `/issues/${issueNumber}/labels`, { labels: names });
+    },
+    async listComments(issueNumber) {
+      const comments = [];
+      for (let page = 1; ; page++) {
+        const batch = await call("GET", `/issues/${issueNumber}/comments?per_page=100&page=${page}`);
+        comments.push(...batch.map(({ id, body }) => ({ id, body })));
+        if (batch.length < 100) return comments;
+      }
+    },
+    async updateComment(commentId, body) {
+      await call("PATCH", `/issues/comments/${commentId}`, { body });
+    },
+    async closeIssue(issueNumber) {
+      await call("PATCH", `/issues/${issueNumber}`, { state: "closed" });
+    },
+    async createIssue(issue) {
+      return (await call("POST", "/issues", issue)).number;
+    },
+    async defaultBranch() {
+      return (await call("GET", "")).default_branch;
+    },
+    async getPull(number) {
+      const pull = await call("GET", `/pulls/${number}`);
+      return { head: pull.head.ref, mergeable: pull.mergeable === true && pull.mergeable_state === "clean" };
+    },
+    async createPull(pull) {
+      return (await call("POST", "/pulls", pull)).number;
+    },
+    async mergePull(number) {
+      await call("PUT", `/pulls/${number}/merge`, { merge_method: "merge" });
     }
   };
 }
@@ -15924,17 +15957,337 @@ function factoryVersion(factoryRoot) {
     return "0.0.0";
   }
 }
+
+// src/runner/plan.ts
+var import__2 = __toESM(require__(), 1);
+var MERGE_LABEL2 = "agent:merge";
+var labelChanges = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    add: { type: "array", items: { type: "string" } },
+    remove: { type: "array", items: { type: "string" } }
+  }
+};
+var SINGLE_FIELDS = {
+  outcome: { type: "string", description: "Exactly one of the task's outcomes." },
+  comment: { type: "string", description: "A comment to post on the subject." },
+  labels: { ...labelChanges, description: "Labels to add or remove, from the task's allowed list." },
+  pullRequest: {
+    type: "object",
+    additionalProperties: false,
+    required: ["title", "body"],
+    properties: { title: { type: "string" }, body: { type: "string" } },
+    description: "Open a pull request from the pushed branch."
+  },
+  closeIssue: { type: "boolean", description: "Close the subject issue." },
+  createIssues: {
+    type: "array",
+    description: "New issues to open.",
+    items: {
+      type: "object",
+      additionalProperties: false,
+      required: ["title", "body"],
+      properties: { title: { type: "string" }, body: { type: "string" }, labels: { type: "array", items: { type: "string" } } }
+    }
+  },
+  merge: { type: "boolean", description: "Merge the pull request once it's mergeable." }
+};
+var ITEM_FIELDS = {
+  number: { type: "integer", description: "The issue this entry is about." },
+  outcome: SINGLE_FIELDS.outcome,
+  comment: SINGLE_FIELDS.comment,
+  labels: SINGLE_FIELDS.labels,
+  close: { type: "boolean", description: "Close this issue." }
+};
+var ajv2 = new import__2.Ajv2020({ allErrors: true, strict: false });
+function validatePlan(plan, task, ctx) {
+  const errors = [];
+  if (!isMap2(plan)) return { ok: false, errors: [{ path: "", message: "the plan must be a JSON object" }] };
+  if (ctx.subject.kind === "batch") {
+    const numbers = ctx.subject.numbers;
+    const items = plan.items;
+    if (!Array.isArray(items)) {
+      errors.push({ path: "items", message: "required: one entry per issue in the batch" });
+    } else {
+      const seen = /* @__PURE__ */ new Set();
+      items.forEach((item, i) => {
+        const at = `items.${i}`;
+        if (!isMap2(item)) return errors.push({ path: at, message: "must be an object" });
+        checkShape(item, ITEM_FIELDS, ctx.planSchema, at, errors);
+        if (typeof item.number === "number") {
+          if (!numbers.includes(item.number)) errors.push({ path: `${at}.number`, message: `#${item.number} isn't in this batch` });
+          else if (seen.has(item.number)) errors.push({ path: `${at}.number`, message: `#${item.number} appears more than once` });
+          seen.add(item.number);
+        } else if (item.number === void 0) {
+          errors.push({ path: `${at}.number`, message: "required" });
+        }
+        checkWrites(item, task, at, errors);
+      });
+    }
+    for (const key of Object.keys(plan)) if (key !== "items") errors.push({ path: key, message: "unknown field" });
+  } else {
+    checkShape(plan, SINGLE_FIELDS, ctx.planSchema, "", errors);
+    checkWrites(plan, task, "", errors);
+    if (plan.merge === true && task.writes.merge && ctx.subject.kind !== "pr") {
+      errors.push({ path: "merge", message: "only a pull request can be merged" });
+    }
+  }
+  const sorted = errors.map((e, i) => ({ e, i })).sort((a, b) => a.e.path.localeCompare(b.e.path) || a.i - b.i).map(({ e }) => e);
+  return { ok: sorted.length === 0, errors: sorted };
+}
+function planJsonSchema(ctx) {
+  const extras = ctx.planSchema?.properties ?? {};
+  if (ctx.subject.kind === "batch") {
+    return {
+      type: "object",
+      additionalProperties: false,
+      required: ["items"],
+      properties: {
+        items: {
+          type: "array",
+          items: { type: "object", additionalProperties: false, required: ["number", "outcome"], properties: { ...ITEM_FIELDS, ...extras } }
+        }
+      }
+    };
+  }
+  return { type: "object", additionalProperties: false, required: ["outcome"], properties: { ...SINGLE_FIELDS, ...extras } };
+}
+function checkShape(value, fields, planSchema, at, errors) {
+  const join4 = (key) => at ? `${at}.${key}` : key;
+  const extraKeys = new Set(Object.keys(planSchema?.properties ?? {}));
+  const base = {};
+  const extras = {};
+  for (const [key, v] of Object.entries(value)) {
+    if (key in fields) base[key] = v;
+    else if (extraKeys.has(key)) extras[key] = v;
+    else errors.push({ path: join4(key), message: "unknown field" });
+  }
+  if (base.outcome === void 0) errors.push({ path: join4("outcome"), message: "required" });
+  const check = (schema, data) => {
+    const validate = ajv2.compile(schema);
+    if (!validate(data)) errors.push(...(validate.errors ?? []).map((e) => toPlanError(e, at)));
+  };
+  check({ type: "object", properties: fields }, base);
+  if (planSchema) check({ ...planSchema, required: void 0 }, extras);
+}
+function checkWrites(plan, task, at, errors) {
+  const join4 = (key) => at ? `${at}.${key}` : key;
+  const outcomes = Object.keys(task.outcomes);
+  if (typeof plan.outcome === "string" && !outcomes.includes(plan.outcome)) {
+    errors.push({ path: join4("outcome"), message: `${plan.outcome} isn't one of this task's outcomes: ${outcomes.join(", ")}` });
+  }
+  if (plan.comment !== void 0 && !task.writes.comment) errors.push({ path: join4("comment"), message: "this task may not comment" });
+  if (isMap2(plan.labels)) {
+    for (const direction of ["add", "remove"]) {
+      const labels = plan.labels[direction];
+      if (!Array.isArray(labels)) continue;
+      for (const label of labels) {
+        if (direction === "add" && label === MERGE_LABEL2) {
+          errors.push({ path: join4("labels.add"), message: `${MERGE_LABEL2} is added only by a person` });
+        } else if (!task.writes.labels.includes(label)) {
+          errors.push({ path: join4(`labels.${direction}`), message: `${label} isn't in this task's writes.labels` });
+        }
+      }
+    }
+  }
+  if (plan.pullRequest !== void 0 && task.writes.pullRequest === false) {
+    errors.push({ path: join4("pullRequest"), message: "this task may not open a pull request" });
+  }
+  for (const key of ["closeIssue", "close"]) {
+    if (plan[key] === true && !task.writes.closeIssue) errors.push({ path: join4(key), message: "this task may not close the issue" });
+  }
+  if (Array.isArray(plan.createIssues) && plan.createIssues.length > task.writes.createIssues) {
+    errors.push({
+      path: join4("createIssues"),
+      message: `this task may create at most ${task.writes.createIssues} issues; the plan asks for ${plan.createIssues.length}`
+    });
+  }
+  if (plan.merge === true && !task.writes.merge) errors.push({ path: join4("merge"), message: "this task may not merge" });
+}
+function toPlanError(e, at) {
+  const segments = [...at ? at.split(".") : [], ...e.instancePath.split("/").slice(1)];
+  if (e.keyword === "required") segments.push(e.params.missingProperty);
+  if (e.keyword === "additionalProperties") segments.push(e.params.additionalProperty);
+  const message = e.keyword === "required" ? "required" : e.keyword === "additionalProperties" ? "unknown field" : e.message ?? "is invalid";
+  return { path: segments.join("."), message };
+}
+function isMap2(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+// src/runner/apply.ts
+var BLOCKED2 = "agent:blocked";
+var WORKFLOWS = ".github/workflows/";
+var Refusal = class extends Error {
+};
+async function applyRun(io) {
+  const target = statusTarget(io.subject);
+  try {
+    const outcome = await applyWrites(io);
+    if (target !== void 0) await upsertStatus(io, target, `\u2705 \`${io.taskName}\`: **${outcome}**`);
+    return { ok: true, outcome };
+  } catch (error) {
+    const reason2 = error instanceof Error ? error.message : String(error);
+    if (target !== void 0) {
+      await io.api.addLabels(target, [BLOCKED2]);
+      const retry = io.task.label ? ` To retry, add \`${io.task.label}\` again.` : "";
+      await upsertStatus(io, target, `\u26D4 \`${io.taskName}\` stopped: ${reason2}${retry}`);
+    }
+    return { ok: false, reason: reason2 };
+  }
+}
+async function applyWrites(io) {
+  if (io.agentStatus !== "ok") {
+    throw new Refusal(io.agentStatus === "timed-out" ? "the agent timed out." : "the agent failed.");
+  }
+  const ctx = {
+    subject: io.subject.kind === "batch" ? { kind: "batch", numbers: io.batchNumbers ?? [] } : io.subject,
+    planSchema: io.planSchema
+  };
+  const { errors } = validatePlan(io.plan, io.task, ctx);
+  if (errors.length > 0) {
+    throw new Refusal(`the plan doesn't fit the task:
+${errors.map((e) => `- \`${e.path || "plan"}\`: ${e.message}`).join("\n")}`);
+  }
+  const plan = io.plan;
+  const branch = await pushChanges(io);
+  if (io.subject.kind === "batch") {
+    for (const item of plan.items) await applyItem(io, item.number, item);
+    await runAfterHook(io, { FACTORY_OUTCOME: "batch", FACTORY_PLAN: JSON.stringify(plan), FACTORY_SUBJECT: "" });
+    return "batch";
+  }
+  const number = "number" in io.subject ? io.subject.number : void 0;
+  let pullNumber;
+  if (isMap3(plan.pullRequest)) {
+    if (!branch) throw new Refusal("the plan asks for a pull request, but the agent changed nothing.");
+    const draft = io.task.writes.pullRequest !== false && io.task.writes.pullRequest.draft;
+    const base = await io.api.defaultBranch();
+    pullNumber = await io.api.createPull({ ...plan.pullRequest, head: branch, base, draft });
+  }
+  if (number !== void 0) await applyItem(io, number, plan);
+  for (const issue of plan.createIssues ?? []) {
+    await io.api.createIssue(issue);
+  }
+  if (plan.merge === true && number !== void 0) {
+    const pull = await io.api.getPull(number);
+    if (!pull.mergeable) throw new Refusal("GitHub can't merge this pull request yet (conflicts, failing checks or required reviews).");
+    await io.api.mergePull(number);
+  }
+  await runAfterHook(io, {
+    FACTORY_OUTCOME: plan.outcome,
+    FACTORY_PLAN: JSON.stringify(plan),
+    FACTORY_SUBJECT: number === void 0 ? "" : String(number),
+    ...pullNumber === void 0 ? {} : { FACTORY_PULL_REQUEST: String(pullNumber) }
+  });
+  return plan.outcome;
+}
+async function runAfterHook(io, env) {
+  if (io.task.hooks?.after) await io.runHook(io.task.hooks.after, { FACTORY_TASK: io.taskName, ...env });
+}
+async function pushChanges(io) {
+  const files = await io.git.changedFiles();
+  if (files.length === 0) return void 0;
+  if (!io.task.writes.push) throw new Refusal("the agent changed files, but this task may not push.");
+  const workflows = files.filter((f) => f.startsWith(WORKFLOWS));
+  if (workflows.length > 0 && !io.task.allowWorkflowChanges) {
+    throw new Refusal(`the agent changed workflow files (${workflows.join(", ")}), and this task doesn't set allowWorkflowChanges.`);
+  }
+  if (!io.checksPassed) throw new Refusal("the checks failed, so nothing was pushed.");
+  const branch = await branchFor(io);
+  await io.git.push(branch);
+  return branch;
+}
+async function branchFor(io) {
+  switch (io.subject.kind) {
+    case "pr": {
+      const { head } = await io.api.getPull(io.subject.number);
+      if (!head.startsWith("agent/")) throw new Refusal(`the factory pushes only to agent/* branches, not ${head}.`);
+      return head;
+    }
+    case "issue":
+      return `agent/issue-${io.subject.number}-${io.runId}`;
+    default:
+      return `agent/${io.taskName}-${io.runId}`;
+  }
+}
+async function applyItem(io, number, item) {
+  if (typeof item.comment === "string") await io.api.comment(number, item.comment);
+  const outcome = io.task.outcomes[item.outcome];
+  const changes = item.labels ?? {};
+  const add = [...outcome.addLabels, ...changes.add ?? []];
+  const remove = [...outcome.removeLabels, ...changes.remove ?? []];
+  if (add.length > 0) await io.api.addLabels(number, add);
+  for (const label of remove) await io.api.removeLabel(number, label);
+  if (item.close === true || item.closeIssue === true) await io.api.closeIssue(number);
+}
+function statusTarget(subject) {
+  if ("number" in subject) return subject.number;
+  return subject.origin;
+}
+async function upsertStatus(io, number, line) {
+  const marker = `<!-- factory:status run=${io.runId} -->`;
+  const body = `${marker}
+**actions-factory** \xB7 ${line}
+
+[run](${io.runUrl})`;
+  const existing = (await io.api.listComments(number)).find((c) => c.body.startsWith(marker));
+  if (existing) await io.api.updateComment(existing.id, body);
+  else await io.api.comment(number, body);
+}
+function isMap3(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+// src/runner/bundle.ts
+import { execFile as execFile2 } from "node:child_process";
+import { existsSync as existsSync3 } from "node:fs";
+import { promisify as promisify2 } from "node:util";
+var run2 = promisify2(execFile2);
+var WORK_REF = "factory-work";
+function bundledWork({ checkout, bundle, remote, token }) {
+  const git = (...args) => run2("git", args, { cwd: checkout });
+  let fetched;
+  const fetch2 = () => fetched ??= existsSync3(bundle) ? git("fetch", "-q", bundle, `${WORK_REF}:${WORK_REF}`).then(() => true) : Promise.resolve(false);
+  return {
+    async changedFiles() {
+      if (!await fetch2()) return [];
+      const { stdout } = await git("diff", "--name-only", `HEAD...${WORK_REF}`);
+      return stdout.split("\n").filter(Boolean);
+    },
+    async push(branch) {
+      if (!await fetch2()) throw new Error("there is no work to push");
+      const auth = token ? ["-c", `http.extraHeader=Authorization: Basic ${Buffer.from(`x-access-token:${token}`).toString("base64")}`] : [];
+      try {
+        await git(...auth, "push", "-q", remote, `${WORK_REF}:refs/heads/${branch}`);
+      } catch (error) {
+        const stderr = String(error.stderr ?? "");
+        const last = stderr.trim().split("\n").pop() ?? "";
+        throw new Error(`git push to ${branch} failed: ${token ? last.replaceAll(token, "***") : last}`);
+      }
+    }
+  };
+}
+
+// src/runner/handoff.ts
+var HANDOFF_ARTIFACT = "factory-handoff";
 export {
   COMMANDS,
+  HANDOFF_ARTIFACT,
   MIN_STUB_VERSION,
   SCHEMA_VERSION,
   STUB_VERSION,
+  WORK_REF,
+  applyRun,
+  bundledWork,
   gitFetcher,
   gitHubApi,
   loadConfig,
+  planJsonSchema,
   renderConfig,
   route,
   runRouter,
   validateConfig,
+  validatePlan,
   validateTemplateManifest
 };
