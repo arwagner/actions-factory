@@ -3204,28 +3204,28 @@ var require_utils = __commonJS({
         if (left.length === 1 && left[0] === "") left.length = 0;
         if (right.length === 1 && right[0] === "") right.length = 0;
       }
-      const parts = left.concat(right);
+      const parts2 = left.concat(right);
       let hextetCount = 0;
-      for (let i = 0; i < parts.length; i++) {
-        const part = parts[i];
+      for (let i = 0; i < parts2.length; i++) {
+        const part = parts2[i];
         if (part === "") return void 0;
         if (part.indexOf(".") !== -1) {
-          if (i !== parts.length - 1 || compression !== -1 && right.length === 0 || !isIPv4(part)) return void 0;
+          if (i !== parts2.length - 1 || compression !== -1 && right.length === 0 || !isIPv4(part)) return void 0;
           hextetCount += 2;
           continue;
         }
         if (!isHextet(part)) return void 0;
-        parts[i] = parseInt(part, 16).toString(16);
+        parts2[i] = parseInt(part, 16).toString(16);
         hextetCount++;
       }
       if (compression === -1) {
         if (hextetCount !== 8) return void 0;
-        return compressIPv6ZeroRun(parts);
+        return compressIPv6ZeroRun(parts2);
       }
       if (hextetCount >= 8) return void 0;
-      const expanded = parts.slice(0, left.length);
+      const expanded = parts2.slice(0, left.length);
       for (let i = hextetCount; i < 8; i++) expanded.push("0");
-      for (let i = left.length; i < parts.length; i++) expanded.push(parts[i]);
+      for (let i = left.length; i < parts2.length; i++) expanded.push(parts2[i]);
       return compressIPv6ZeroRun(expanded);
     }
     function normalizeIPv6(host) {
@@ -7787,26 +7787,26 @@ var require_directives = __commonJS({
           this.tags = Object.assign({}, _Directives.defaultTags);
           this.atNextDocument = false;
         }
-        const parts = line.trim().split(/[ \t]+/);
-        const name = parts.shift();
+        const parts2 = line.trim().split(/[ \t]+/);
+        const name = parts2.shift();
         switch (name) {
           case "%TAG": {
-            if (parts.length !== 2) {
+            if (parts2.length !== 2) {
               onError(0, "%TAG directive should contain exactly two parts");
-              if (parts.length < 2)
+              if (parts2.length < 2)
                 return false;
             }
-            const [handle, prefix] = parts;
+            const [handle, prefix] = parts2;
             this.tags[handle] = prefix;
             return true;
           }
           case "%YAML": {
             this.yaml.explicit = true;
-            if (parts.length !== 1) {
+            if (parts2.length !== 1) {
               onError(0, "%YAML directive should contain exactly one part");
               return false;
             }
-            const [version] = parts;
+            const [version] = parts2;
             if (version === "1.1" || version === "1.2") {
               this.yaml.version = version;
               return true;
@@ -10543,9 +10543,9 @@ var require_timestamp = __commonJS({
     var stringifyNumber = require_stringifyNumber();
     function parseSexagesimal(str, asBigInt) {
       const sign = str[0];
-      const parts = sign === "-" || sign === "+" ? str.substring(1) : str;
+      const parts2 = sign === "-" || sign === "+" ? str.substring(1) : str;
       const num = (n) => asBigInt ? BigInt(n) : Number(n);
-      const res = parts.replace(/_/g, "").split(":").reduce((res2, p) => res2 * num(60) + num(p), num(0));
+      const res = parts2.replace(/_/g, "").split(":").reduce((res2, p) => res2 * num(60) + num(p), num(0));
       return sign === "-" ? num(-1) * res : res;
     }
     function stringifySexagesimal(node) {
@@ -10561,18 +10561,18 @@ var require_timestamp = __commonJS({
         value *= num(-1);
       }
       const _60 = num(60);
-      const parts = [value % _60];
+      const parts2 = [value % _60];
       if (value < 60) {
-        parts.unshift(0);
+        parts2.unshift(0);
       } else {
-        value = (value - parts[0]) / _60;
-        parts.unshift(value % _60);
+        value = (value - parts2[0]) / _60;
+        parts2.unshift(value % _60);
         if (value >= 60) {
-          value = (value - parts[0]) / _60;
-          parts.unshift(value);
+          value = (value - parts2[0]) / _60;
+          parts2.unshift(value);
         }
       }
-      return sign + parts.map((n) => String(n).padStart(2, "0")).join(":").replace(/000000\d*$/, "");
+      return sign + parts2.map((n) => String(n).padStart(2, "0")).join(":").replace(/000000\d*$/, "");
     }
     var intTime = {
       identify: (value) => typeof value === "bigint" || Number.isInteger(value),
@@ -15666,11 +15666,122 @@ function sortKeys(map, order) {
   const rank = (key) => order.includes(key) ? order.indexOf(key) : order.length;
   return Object.fromEntries(Object.entries(map).sort(([a], [b]) => rank(a) - rank(b)));
 }
+
+// src/router/route.ts
+var COMMANDS = ["doctor", "show-config"];
+var GETTING_STARTED = "https://github.com/arwagner/actions-factory/wiki/Getting-started";
+function route(input) {
+  const warnings = stubWarnings(input.context);
+  switch (input.event.name) {
+    case "issues":
+    case "pull_request_target":
+      return routeLabel(input, warnings);
+    case "workflow_dispatch": {
+      const command = String(input.event.payload.inputs?.command ?? "");
+      if (COMMANDS.includes(command)) return { kind: "command", command, warnings };
+      const message = `Unknown command ${command || "(none)"}. Use ${COMMANDS.join(" or ")}.`;
+      return { kind: "refuse", code: "unknown-command", message, warnings };
+    }
+    case "schedule": {
+      const blocked = blockingRefusal(input);
+      return blocked ? { kind: "refuse", ...blocked, warnings } : { kind: "sweep", warnings };
+    }
+    default:
+      return { kind: "ignore", reason: `${input.event.name} events start nothing`, warnings };
+  }
+}
+function routeLabel(input, warnings) {
+  const payload = input.event.payload;
+  const label = payload.label?.name ?? "";
+  const refuse = (code, message, subject2) => ({ kind: "refuse", code, message, subject: subject2, warnings });
+  if (payload.action !== "labeled") return { kind: "ignore", reason: `${payload.action} events start nothing`, warnings };
+  if (!label.startsWith("agent:")) return { kind: "ignore", reason: `${label} isn't a factory label`, warnings };
+  const item = payload.pull_request ? { kind: "pr", number: payload.pull_request.number } : { kind: "issue", number: payload.issue.number };
+  if (payload.pull_request && isFork(payload.pull_request)) {
+    return refuse("fork", "The factory doesn't run on pull requests from forks.", item);
+  }
+  const blocked = blockingRefusal(input);
+  if (blocked) return refuse(blocked.code, blocked.message, item);
+  const tasks = input.config.config.tasks ?? {};
+  const match = Object.entries(tasks).find(([, t]) => t.label === label);
+  if (!match) return { kind: "ignore", reason: `no task uses the label ${label}`, warnings };
+  const [name, task] = match;
+  const subject = subjectFor(task, item);
+  if (!subject) {
+    const wants = task.subject === "pr" ? "pull requests" : "issues";
+    const got = item.kind === "pr" ? "pull requests" : "issues";
+    const message = `${label} works on ${wants}, not ${got}.`;
+    return refuse("wrong-subject", message, item);
+  }
+  return { kind: "run", task: name, label, subject, actor: payload.sender.login, warnings };
+}
+function blockingRefusal({ context, config }) {
+  if (!context.hasFactoryToken) {
+    const message = `The \`FACTORY_TOKEN\` secret isn't set, so the factory can't run. Set it up as described in ${GETTING_STARTED}.`;
+    return { code: "missing-token", message };
+  }
+  if (context.stubVersion && major(context.stubVersion) < major(context.factoryVersion)) {
+    const message = `This repo's stub is v${bare(context.stubVersion)}, from an older major than the factory (v${bare(context.factoryVersion)}). Copy the current stub from ${GETTING_STARTED}.`;
+    return { code: "stale-stub", message };
+  }
+  if (!config.ok) {
+    const lines = config.errors.map(
+      (e) => `- ${[e.path ? `\`${e.path}\`` : "", e.layer ? `(${e.layer})` : ""].filter(Boolean).join(" ")}: ${e.message}`
+    );
+    return { code: "bad-config", message: ["The factory config doesn't validate:", ...lines].join("\n") };
+  }
+  return void 0;
+}
+function stubWarnings({ stubVersion, minStubVersion }) {
+  if (!stubVersion) return ["The stub declares no version. Copy the current stub from the wiki's Getting started page."];
+  if (compare(stubVersion, minStubVersion) < 0) {
+    return [
+      `The stub is v${bare(stubVersion)}; v${bare(minStubVersion)} or newer is recommended. Copy the current stub from the wiki's Getting started page.`
+    ];
+  }
+  return [];
+}
+function isFork(pr) {
+  return pr.head.repo?.full_name !== pr.base.repo.full_name;
+}
+function bare(version) {
+  return version.replace(/^v/, "");
+}
+function parts(version) {
+  return bare(version).split(".").map((n) => Number.parseInt(n, 10) || 0);
+}
+function major(version) {
+  return parts(version)[0];
+}
+function compare(a, b) {
+  const [x, y] = [parts(a), parts(b)];
+  for (let i = 0; i < 3; i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) - (y[i] ?? 0);
+  return 0;
+}
+function subjectFor(task, item) {
+  switch (task.subject) {
+    case "issue":
+    case "pr":
+      return task.subject === item.kind ? item : void 0;
+    case "batch":
+      return item.kind === "issue" ? { kind: "batch", query: task.query ?? "", origin: item.number } : void 0;
+    default:
+      return { kind: "repo", origin: item.number };
+  }
+}
+
+// src/router/version.ts
+var STUB_VERSION = "1.0.0";
+var MIN_STUB_VERSION = "1.0.0";
 export {
+  COMMANDS,
+  MIN_STUB_VERSION,
   SCHEMA_VERSION,
+  STUB_VERSION,
   gitFetcher,
   loadConfig,
   renderConfig,
+  route,
   validateConfig,
   validateTemplateManifest
 };

@@ -5,7 +5,7 @@ Decided in: Safety model (#14), cross-owner test (#18). See ADR 0004 and ADR 000
 ## Who can start a task
 
 - The router checks that whoever added the trigger label has write access or above. Triage users can add labels but can't push code, so they don't count.
-- **Fork PRs are refused** with a comment before any checkout. The stub never checks out fork code where secrets are available.
+- **Fork PRs are refused** with a comment before any checkout. The stub never checks out fork code where secrets are available. A PR counts as a fork when `head.repo.full_name` differs from `base.repo.full_name`, or the head repo is gone. `head.repo.fork` isn't used: it is true for every PR inside a repo that is itself a fork (#28).
 
 ## Merge consent
 

@@ -13,11 +13,12 @@ factory.yml                                 ├─ route job      (ubuntu-latest
 ```
 
 - **Stub.** One fixed workflow that the client copies once. It wakes on:
-  - `issues` and `pull_request_target` `labeled` events whose label starts with `agent:` (a job-level `if:` filters on the prefix before any runner starts);
-  - `issue_comment`;
+  - `issues` and `pull_request_target` `labeled` events whose label starts with `agent:`. A job-level `if:` filters on the prefix before any runner starts. Other labels still leave a skipped run, with no runner, in the Actions list. `startsWith` ignores case, so the router re-checks the label exactly;
   - `workflow_dispatch`, with a `command` input (`doctor`, `show-config`);
-  - `repository_dispatch`;
+  - `repository_dispatch`, which the router ignores for now. It's reserved for external triggers, so they can come later without a new stub;
   - a `schedule` tick every 15 minutes.
+
+  It doesn't listen to `issue_comment`. Every comment would wake it, including the factory's own, and comment-triggered tasks would need new task fields anyway (#36).
 
   It sets a readable `run-name` (`factory · agent:review · #42`) and calls the router at the version it pins, passing the named secrets (section 2). It carries its own version in a comment.
 - **Router.** A reusable workflow in this repo. It reads `factory.yml` and the resolved template stack, validates the merged config, and picks at most one task per event, or none. It refuses or defers with a reason (section 7). It creates any missing labels, then hands the task to the task runner jobs.
