@@ -43,6 +43,8 @@ export interface AgentJobIO {
    */
   api: () => GitHubApi;
   adapters: Record<string, Adapter>;
+  /** Public repos keep no transcript artifact unless the client opts in (§9). */
+  uploadTranscript: boolean;
   /** Runs a shell command in the checkout with extra env, streaming its output to the log. */
   runCommand: (command: string, env: Record<string, string>) => Promise<{ code: number; output: string }>;
   runHook: (path: string, env: Record<string, string>) => Promise<void>;
@@ -56,6 +58,7 @@ interface State {
   checksPassed?: boolean;
   checkFailure?: string;
   turnsRun: number;
+  usage?: HandoffMeta["usage"];
 }
 
 const files = (workDir: string) => ({
@@ -117,7 +120,7 @@ export async function runTurn(io: AgentJobIO, turn: number): Promise<void> {
     turn,
     task: io.task.name,
   });
-  saveState(io, { ...state, agentStatus: result.status, checksPassed: undefined, turnsRun: turn });
+  saveState(io, { ...state, agentStatus: result.status, checksPassed: undefined, turnsRun: turn, usage: addUsage(state.usage, result.usage) });
 }
 
 /**
@@ -153,10 +156,11 @@ export async function handoff(io: AgentJobIO): Promise<void> {
     agentStatus: status,
     checksPassed: state?.checksPassed !== false || !io.task.checksGate,
     batchNumbers: state?.batchNumbers,
+    usage: state?.usage,
   };
   writeFileSync(join(f.handoff, "meta.json"), JSON.stringify(meta, null, 2));
   if (existsSync(f.plan)) copyFileSync(f.plan, join(f.handoff, "plan.json"));
-  if (existsSync(f.transcript)) copyFileSync(f.transcript, join(f.handoff, "transcript.ndjson"));
+  if (io.uploadTranscript && existsSync(f.transcript)) copyFileSync(f.transcript, join(f.handoff, "transcript.ndjson"));
 
   const run = (...args: string[]) =>
     git("git", ["-c", "user.name=actions-factory", "-c", "user.email=actions-factory@users.noreply.github.com", ...args], {
@@ -168,6 +172,13 @@ export async function handoff(io: AgentJobIO): Promise<void> {
   if ((await run("status", "--porcelain")).stdout.trim() === "") return;
   await run("commit", "-q", "-m", `actions-factory: ${io.task.name}`);
   await run("bundle", "create", join(f.handoff, "work.bundle"), `${base}..${WORK_REF}`);
+}
+
+function addUsage(a: HandoffMeta["usage"], b: HandoffMeta["usage"]): HandoffMeta["usage"] {
+  if (!a) return b;
+  if (!b) return a;
+  const sum = (x?: number, y?: number) => (x === undefined && y === undefined ? undefined : (x ?? 0) + (y ?? 0));
+  return { inputTokens: sum(a.inputTokens, b.inputTokens), outputTokens: sum(a.outputTokens, b.outputTokens), costUsd: sum(a.costUsd, b.costUsd) };
 }
 
 function needsAnotherRound(state: State, turn: number): boolean {

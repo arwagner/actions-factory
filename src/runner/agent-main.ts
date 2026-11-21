@@ -47,6 +47,7 @@ async function main(): Promise<void> {
     subject: decision.subject,
     api: () => gitHubApi(required("GITHUB_TOKEN"), owner, repo, env("GITHUB_API_URL")),
     adapters: ADAPTERS,
+    uploadTranscript: env("FACTORY_REPO_PRIVATE") === "true",
     runCommand: (command, values) => runStreaming("bash", ["-c", command], checkout, values),
     runHook: async (path, hookEnv) => {
       const [command, args] = path.endsWith(".sh") ? ["bash", [path]] : /\.m?js$/.test(path) ? ["node", [path]] : [path, []];

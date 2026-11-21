@@ -39,6 +39,7 @@ function setup(files: Record<string, string>, task: Partial<AgentTask> = {}): Ag
     subject: { kind: "issue", number: 42 },
     api: () => gh.api("github-token"),
     adapters: { fake: fakeAdapter },
+    uploadTranscript: true,
     runCommand: async (command, env) => {
       const r = spawnSync("bash", ["-c", command], { cwd: checkout, env: { ...process.env, ...env }, encoding: "utf8" });
       return { code: r.status ?? 1, output: `${r.stdout}${r.stderr}` };
@@ -73,7 +74,7 @@ describe("the agent job", () => {
 
     expect(prompt(io)).toContain("Add a widget");
     expect(hookEnvs).toEqual([{ FACTORY_TASK: "implement", FACTORY_WORK_DIR: io.workDir }]);
-    expect(meta(io)).toEqual({ agentStatus: "ok", checksPassed: true });
+    expect(meta(io)).toEqual({ agentStatus: "ok", checksPassed: true, usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 } });
     expect(JSON.parse(readFileSync(join(io.workDir, "handoff/plan.json"), "utf8"))).toEqual({ outcome: "done" });
     const bundle = join(io.workDir, "handoff/work.bundle");
     expect(git(io.checkout, "bundle", "list-heads", bundle)).toContain("refs/heads/factory-work");

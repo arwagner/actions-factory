@@ -21,3 +21,5 @@ export { ADAPTERS, type Adapter, type AdapterInput, type AdapterOutput } from ".
 export { handoff, prepare, runChecks, runTurn, type AgentJobIO, type AgentTask } from "./runner/agent-job.js";
 export { maskCommands, parseDotenv, scrub } from "./runner/check-env.js";
 export { buildPrompt, type PromptInput, type PromptItem } from "./runner/prompt.js";
+export { CLAUDE_CODE_VERSION, claudeAdapter, type ClaudeOptions } from "./agents/claude.js";
+export { CLI_VERSIONS } from "./agents/versions.js";

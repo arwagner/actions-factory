@@ -5,6 +5,7 @@ import { type FetchRepo, loadConfig, type LoadResult } from "../config/load.js";
 import { renderConfig } from "../config/render.js";
 import type { GitHubApi, Label } from "./github.js";
 import { type Decision, route } from "./route.js";
+import { CLI_VERSIONS } from "../agents/versions.js";
 import { MIN_STUB_VERSION } from "./version.js";
 
 /** Everything the route job reads and every side effect it has. */
@@ -161,8 +162,10 @@ export function agentJobSettings(config: Record<string, unknown>, taskName: stri
   const task = (config.tasks as Record<string, Record<string, unknown>>)[taskName];
   const pick = (key: string) => task[key] ?? config[key];
   const timeout = task.timeout as number;
+  const agent = pick("agent") as string;
   return {
-    agent: pick("agent") as string,
+    agent,
+    cliVersion: CLI_VERSIONS[agent] ?? "none",
     runsOn: pick("runsOn"),
     container: (pick("container") as string | undefined) ?? "",
     timeout,

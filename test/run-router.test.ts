@@ -58,6 +58,7 @@ describe("runRouter", () => {
     expect(outputs.task).toBe("implement");
     expect(JSON.parse(outputs["agent-job"])).toEqual({
       agent: "claude",
+      cliVersion: "2.1.319",
       runsOn: "ubuntu-latest",
       container: "",
       timeout: 60,
