@@ -16436,19 +16436,27 @@ async function runTurn(io, turn) {
   }
   saveState(io, { ...state, agentStatus: "timed-out", checksPassed: void 0, turnsRun: turn });
   const started = Date.now();
-  const result = await adapter.run({
-    checkout: io.checkout,
-    promptFile: f.prompt,
-    skills: io.task.skills,
-    planSchemaFile: f.planSchema,
-    planFile: f.plan,
-    permission: io.task.permission,
-    model: io.task.model,
-    timeoutMinutes: io.task.timeout,
-    transcriptFile: f.transcript,
-    turn,
-    task: io.task.name
-  });
+  let result;
+  try {
+    result = await adapter.run({
+      checkout: io.checkout,
+      promptFile: f.prompt,
+      skills: io.task.skills,
+      planSchemaFile: f.planSchema,
+      planFile: f.plan,
+      permission: io.task.permission,
+      model: io.task.model,
+      timeoutMinutes: io.task.timeout,
+      transcriptFile: f.transcript,
+      turn,
+      task: io.task.name
+    });
+  } catch (error) {
+    const agentError = `the ${adapter.name} adapter failed: ${error instanceof Error ? error.message : String(error)}`;
+    io.log(`::error::${agentError}`);
+    saveState(io, { ...state, agentStatus: "failed", checksPassed: void 0, turnsRun: turn, agentError });
+    return;
+  }
   saveState(io, {
     ...state,
     agentStatus: result.status,

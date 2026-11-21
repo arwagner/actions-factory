@@ -176,6 +176,17 @@ describe("the agent job", () => {
     expect(ran).toBe(true);
   });
 
+  it("reports an adapter that throws as failed, with the reason, not as timed out", async () => {
+    const broken = { name: "fake", credentials: [], run: async () => { throw new Error("Bad control character in JSON"); }, ping: async () => ({ ok: true, detail: "" }) };
+    const io = { ...setup({}), adapters: { fake: broken } };
+
+    await prepare(io);
+    await runTurn(io, 1);
+    await handoff(io);
+
+    expect(meta(io)).toMatchObject({ agentStatus: "failed", agentError: "the fake adapter failed: Bad control character in JSON" });
+  });
+
   it("keeps commits the agent made itself, measured from where the job started", async () => {
     const io = setup({ ".factory/fake/implement.json": script({ outcome: "done" }) });
     await prepare(io);

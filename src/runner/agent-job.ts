@@ -91,8 +91,8 @@ export async function prepare(io: AgentJobIO): Promise<void> {
     items,
     outcomes: Object.keys(io.task.outcomes),
     checks: io.task.checks,
-    planFile: f.plan,
-    planSchemaFile: f.planSchema,
+      planFile: f.plan,
+      planSchemaFile: f.planSchema,
   };
   writeFileSync(f.prompt, buildPrompt(promptInput));
   const base = (await git("git", ["rev-parse", "HEAD"], { cwd: io.checkout })).stdout.trim();
@@ -124,19 +124,28 @@ export async function runTurn(io: AgentJobIO, turn: number): Promise<void> {
   // If the step's own timeout kills this round, the state already says so.
   saveState(io, { ...state, agentStatus: "timed-out", checksPassed: undefined, turnsRun: turn });
   const started = Date.now();
-  const result = await adapter.run({
-    checkout: io.checkout,
-    promptFile: f.prompt,
-    skills: io.task.skills,
+  let result: Awaited<ReturnType<Adapter["run"]>>;
+  try {
+    result = await adapter.run({
+      checkout: io.checkout,
+      promptFile: f.prompt,
+      skills: io.task.skills,
     planSchemaFile: f.planSchema,
     planFile: f.plan,
-    permission: io.task.permission,
-    model: io.task.model,
-    timeoutMinutes: io.task.timeout,
-    transcriptFile: f.transcript,
-    turn,
-    task: io.task.name,
-  });
+      permission: io.task.permission,
+      model: io.task.model,
+      timeoutMinutes: io.task.timeout,
+      transcriptFile: f.transcript,
+      turn,
+      task: io.task.name,
+    });
+  } catch (error) {
+    // The adapter itself broke (not the agent timing out): say so rather than leave the provisional timed-out.
+    const agentError = `the ${adapter.name} adapter failed: ${error instanceof Error ? error.message : String(error)}`;
+    io.log(`::error::${agentError}`);
+    saveState(io, { ...state, agentStatus: "failed", checksPassed: undefined, turnsRun: turn, agentError });
+    return;
+  }
   saveState(io, {
     ...state,
     agentStatus: result.status,
