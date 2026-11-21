@@ -22,11 +22,14 @@ async function main(): Promise<void> {
   if (decision.kind !== "run") return;
   const [owner, repo] = required("GITHUB_REPOSITORY").split("/");
   const token = required("FACTORY_TOKEN");
+  // The work happens in the workspace: a pull request's head for PR tasks. The config always comes from the base
+  // (FACTORY_CONFIG_ROOT for PR tasks), so a PR can't change the rules it runs under.
   const checkout = required("GITHUB_WORKSPACE");
+  const base = env("FACTORY_CONFIG_ROOT") ?? checkout;
   const handoff = required("HANDOFF_DIR");
 
   const loaded = await loadConfig({
-    clientRoot: checkout,
+    clientRoot: base,
     factoryRoot: required("FACTORY_ROOT"),
     fetchRepo: gitFetcher({ cacheDir: join(required("RUNNER_TEMP"), "factory-templates"), token }),
   });

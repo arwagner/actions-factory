@@ -15992,14 +15992,22 @@ function gitHubApi(token, owner, repo, baseUrl = "https://api.github.com") {
     },
     async getPull(number) {
       const pull = await call("GET", `/pulls/${number}`);
-      const checks = await call("GET", `/commits/${pull.head.sha}/check-runs?per_page=100`);
-      const running = checks.check_runs.some((c) => c.status !== "completed");
+      const checks = await call("GET", `/commits/${pull.head.sha}/check-runs?per_page=100`, void 0, [403]);
+      const running = checks?.check_runs.some((c) => c.status !== "completed") ?? false;
       return {
         head: pull.head.ref,
-        headRepo: pull.head.repo?.full_name ?? null,
-        baseRepo: pull.base.repo.full_name,
         mergeable: pull.mergeable === true && pull.mergeable_state === "clean",
         pending: pull.mergeable === null || pull.mergeable_state === "unknown" || running
+      };
+    },
+    async pullInfo(number) {
+      const pull = await call("GET", `/pulls/${number}`);
+      return {
+        head: pull.head.ref,
+        headSha: pull.head.sha,
+        base: pull.base.ref,
+        headRepo: pull.head.repo?.full_name ?? null,
+        baseRepo: pull.base.repo.full_name
       };
     },
     async createPull(pull) {
@@ -16613,6 +16621,11 @@ async function runRouter(io) {
   if (decision.kind === "run") {
     io.setOutput("task", decision.task);
     io.setOutput("agent-job", JSON.stringify(agentJobSettings(loaded.config, decision.task)));
+    if (decision.subject.kind === "pr") {
+      const pull = await reader.pullInfo(decision.subject.number);
+      io.setOutput("head-sha", pull.headSha);
+      io.setOutput("base-ref", pull.base);
+    }
   }
   return decision;
 }
@@ -16626,7 +16639,7 @@ async function resolveSweptItem(event, reader) {
   const label = { name: trigger };
   const sender = { login: await reader.labeler(number, trigger) ?? "(unknown)" };
   if (!item.isPullRequest) return { name: "issues", payload: { action: "labeled", label, issue: { number }, sender } };
-  const pull = await reader.getPull(number);
+  const pull = await reader.pullInfo(number);
   const pullRequest = { number, head: { repo: pull.headRepo ? { full_name: pull.headRepo } : null }, base: { repo: { full_name: pull.baseRepo } } };
   return { name: "pull_request_target", payload: { action: "labeled", label, pull_request: pullRequest, sender } };
 }
@@ -17356,19 +17369,27 @@ async function runTurn(io, turn) {
   }
   saveState(io, { ...state, agentStatus: "timed-out", checksPassed: void 0, turnsRun: turn });
   const started = Date.now();
-  const result = await adapter.run({
-    checkout: io.checkout,
-    promptFile: f.prompt,
-    skills: io.task.skills,
-    planSchemaFile: f.planSchema,
-    planFile: f.plan,
-    permission: io.task.permission,
-    model: io.task.model,
-    timeoutMinutes: io.task.timeout,
-    transcriptFile: f.transcript,
-    turn,
-    task: io.task.name
-  });
+  let result;
+  try {
+    result = await adapter.run({
+      checkout: io.checkout,
+      promptFile: f.prompt,
+      skills: io.task.skills,
+      planSchemaFile: f.planSchema,
+      planFile: f.plan,
+      permission: io.task.permission,
+      model: io.task.model,
+      timeoutMinutes: io.task.timeout,
+      transcriptFile: f.transcript,
+      turn,
+      task: io.task.name
+    });
+  } catch (error) {
+    const agentError = `the ${adapter.name} adapter failed: ${error instanceof Error ? error.message : String(error)}`;
+    io.log(`::error::${agentError}`);
+    saveState(io, { ...state, agentStatus: "failed", checksPassed: void 0, turnsRun: turn, agentError });
+    return;
+  }
   saveState(io, {
     ...state,
     agentStatus: result.status,

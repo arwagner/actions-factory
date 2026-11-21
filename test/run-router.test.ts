@@ -21,6 +21,12 @@ tasks:
     schedule: { cron: "0 9 * * *" }
     outcomes:
       done: {}
+  review:
+    label: agent:review
+    subject: pr
+    prompt: p.md
+    outcomes:
+      done: {}
 `;
 
 let gh: FakeGitHub;
@@ -76,7 +82,7 @@ describe("runRouter", () => {
     expect(gh.calls("updateLabel").map((w) => w.args)).toEqual([
       { name: "needs-a-human", color: "d93f0b", description: "Waits on a person" },
     ]);
-    expect(gh.calls("createLabel").map((w) => (w.args as { name: string }).name).sort()).toEqual(["agent:blocked", "agent:implement"]);
+    expect(gh.calls("createLabel").map((w) => (w.args as { name: string }).name).sort()).toEqual(["agent:blocked", "agent:implement", "agent:review"]);
     expect(gh.calls("removeLabel")).toEqual([{ token: "factory-token", call: "removeLabel", args: { number: 42, name: "agent:implement" } }]);
     expect(gh.writes.every((w) => w.token === "factory-token")).toBe(true);
   });
@@ -92,6 +98,21 @@ describe("runRouter", () => {
     expect(text).toContain("| Factory | v1.2.0 (`abcdef1`) |");
     expect(text).toContain("| Agent | claude 2.1.319, model the CLI's default |");
     expect(text).toContain("<summary>Factory config: template default → factory.yml</summary>");
+  });
+
+  it("hands a PR task the PR's head and base commits, so the work is on the PR and the config on the base", async () => {
+    gh.pulls[7] = { head: "agent/issue-3-1", mergeable: false };
+    const payload = {
+      action: "labeled",
+      label: { name: "agent:review" },
+      pull_request: { number: 7, head: { repo: { full_name: "o/r" } }, base: { repo: { full_name: "o/r" } } },
+      sender: { login: "ana" },
+    };
+
+    await runRouter(io({ eventName: "pull_request_target", payload }));
+
+    expect(outputs["head-sha"]).toBe("headsha");
+    expect(outputs["base-ref"]).toBe("main");
   });
 
   it("refuses a label added by someone without write access, and takes the label off", async () => {

@@ -133,6 +133,12 @@ export async function runRouter(io: RouterIO): Promise<Decision> {
   if (decision.kind === "run") {
     io.setOutput("task", decision.task);
     io.setOutput("agent-job", JSON.stringify(agentJobSettings(loaded.config, decision.task)));
+    // A PR task works on the PR's head, read now so every job uses the same commit.
+    if (decision.subject.kind === "pr") {
+      const pull = await reader.pullInfo(decision.subject.number);
+      io.setOutput("head-sha", pull.headSha);
+      io.setOutput("base-ref", pull.base);
+    }
   }
   return decision;
 }
@@ -155,7 +161,7 @@ async function resolveSweptItem(event: Event, reader: GitHubApi): Promise<Event 
   const label = { name: trigger };
   const sender = { login: (await reader.labeler(number, trigger)) ?? "(unknown)" };
   if (!item.isPullRequest) return { name: "issues", payload: { action: "labeled", label, issue: { number }, sender } };
-  const pull = await reader.getPull(number);
+  const pull = await reader.pullInfo(number);
   const pullRequest = { number, head: { repo: pull.headRepo ? { full_name: pull.headRepo } : null }, base: { repo: { full_name: pull.baseRepo } } };
   return { name: "pull_request_target", payload: { action: "labeled", label, pull_request: pullRequest, sender } };
 }

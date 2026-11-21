@@ -31,7 +31,9 @@ export interface GitHubApi {
    * Head branch name; whether GitHub can merge it now (mergeable, checks green); and whether that may still
    * change (mergeability being computed, or check runs on the head not finished).
    */
-  getPull(number: number): Promise<{ head: string; mergeable: boolean; pending: boolean; headRepo: string | null; baseRepo: string }>;
+  getPull(number: number): Promise<{ head: string; mergeable: boolean; pending: boolean }>;
+  /** A PR's branches, commits and repos, without its checks: the default token can read this. */
+  pullInfo(number: number): Promise<{ head: string; headSha: string; base: string; headRepo: string | null; baseRepo: string }>;
   createPull(pull: { title: string; body: string; head: string; base: string; draft: boolean }): Promise<number>;
   /** Merges with a merge commit. Throws if GitHub refuses. */
   mergePull(number: number): Promise<void>;
@@ -175,18 +177,33 @@ export function gitHubApi(token: string, owner: string, repo: string, baseUrl = 
     async getPull(number) {
       const pull = (await call("GET", `/pulls/${number}`)) as {
         head: { ref: string; sha: string; repo: { full_name: string } | null };
-        base: { repo: { full_name: string } };
+        base: { sha: string; repo: { full_name: string } };
         mergeable: boolean | null;
         mergeable_state: string;
       };
-      const checks = (await call("GET", `/commits/${pull.head.sha}/check-runs?per_page=100`)) as { check_runs: Array<{ status: string }> };
-      const running = checks.check_runs.some((c) => c.status !== "completed");
+      // Listing check runs needs the Checks permission, which the recommended token leaves out. Without it,
+      // GitHub's mergeable_state alone says whether required checks are still running.
+      const checks = (await call("GET", `/commits/${pull.head.sha}/check-runs?per_page=100`, undefined, [403])) as
+        | { check_runs: Array<{ status: string }> }
+        | undefined;
+      const running = checks?.check_runs.some((c) => c.status !== "completed") ?? false;
       return {
         head: pull.head.ref,
-        headRepo: pull.head.repo?.full_name ?? null,
-        baseRepo: pull.base.repo.full_name,
         mergeable: pull.mergeable === true && pull.mergeable_state === "clean",
         pending: pull.mergeable === null || pull.mergeable_state === "unknown" || running,
+      };
+    },
+    async pullInfo(number) {
+      const pull = (await call("GET", `/pulls/${number}`)) as {
+        head: { ref: string; sha: string; repo: { full_name: string } | null };
+        base: { ref: string; repo: { full_name: string } };
+      };
+      return {
+        head: pull.head.ref,
+        headSha: pull.head.sha,
+        base: pull.base.ref,
+        headRepo: pull.head.repo?.full_name ?? null,
+        baseRepo: pull.base.repo.full_name,
       };
     },
     async createPull(pull) {

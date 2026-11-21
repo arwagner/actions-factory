@@ -15785,14 +15785,22 @@ function gitHubApi(token, owner, repo, baseUrl = "https://api.github.com") {
     },
     async getPull(number) {
       const pull = await call("GET", `/pulls/${number}`);
-      const checks = await call("GET", `/commits/${pull.head.sha}/check-runs?per_page=100`);
-      const running = checks.check_runs.some((c) => c.status !== "completed");
+      const checks = await call("GET", `/commits/${pull.head.sha}/check-runs?per_page=100`, void 0, [403]);
+      const running = checks?.check_runs.some((c) => c.status !== "completed") ?? false;
       return {
         head: pull.head.ref,
-        headRepo: pull.head.repo?.full_name ?? null,
-        baseRepo: pull.base.repo.full_name,
         mergeable: pull.mergeable === true && pull.mergeable_state === "clean",
         pending: pull.mergeable === null || pull.mergeable_state === "unknown" || running
+      };
+    },
+    async pullInfo(number) {
+      const pull = await call("GET", `/pulls/${number}`);
+      return {
+        head: pull.head.ref,
+        headSha: pull.head.sha,
+        base: pull.base.ref,
+        headRepo: pull.head.repo?.full_name ?? null,
+        baseRepo: pull.base.repo.full_name
       };
     },
     async createPull(pull) {
@@ -16278,9 +16286,10 @@ async function main() {
   const [owner, repo] = required("GITHUB_REPOSITORY").split("/");
   const token = required("FACTORY_TOKEN");
   const checkout = required("GITHUB_WORKSPACE");
+  const base = env("FACTORY_CONFIG_ROOT") ?? checkout;
   const handoff = required("HANDOFF_DIR");
   const loaded = await loadConfig({
-    clientRoot: checkout,
+    clientRoot: base,
     factoryRoot: required("FACTORY_ROOT"),
     fetchRepo: gitFetcher({ cacheDir: join3(required("RUNNER_TEMP"), "factory-templates"), token })
   });

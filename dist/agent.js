@@ -16141,14 +16141,22 @@ function gitHubApi(token, owner, repo, baseUrl = "https://api.github.com") {
     },
     async getPull(number) {
       const pull = await call("GET", `/pulls/${number}`);
-      const checks = await call("GET", `/commits/${pull.head.sha}/check-runs?per_page=100`);
-      const running = checks.check_runs.some((c) => c.status !== "completed");
+      const checks = await call("GET", `/commits/${pull.head.sha}/check-runs?per_page=100`, void 0, [403]);
+      const running = checks?.check_runs.some((c) => c.status !== "completed") ?? false;
       return {
         head: pull.head.ref,
-        headRepo: pull.head.repo?.full_name ?? null,
-        baseRepo: pull.base.repo.full_name,
         mergeable: pull.mergeable === true && pull.mergeable_state === "clean",
         pending: pull.mergeable === null || pull.mergeable_state === "unknown" || running
+      };
+    },
+    async pullInfo(number) {
+      const pull = await call("GET", `/pulls/${number}`);
+      return {
+        head: pull.head.ref,
+        headSha: pull.head.sha,
+        base: pull.base.ref,
+        headRepo: pull.head.repo?.full_name ?? null,
+        baseRepo: pull.base.repo.full_name
       };
     },
     async createPull(pull) {
@@ -16428,19 +16436,27 @@ async function runTurn(io, turn) {
   }
   saveState(io, { ...state, agentStatus: "timed-out", checksPassed: void 0, turnsRun: turn });
   const started = Date.now();
-  const result = await adapter.run({
-    checkout: io.checkout,
-    promptFile: f.prompt,
-    skills: io.task.skills,
-    planSchemaFile: f.planSchema,
-    planFile: f.plan,
-    permission: io.task.permission,
-    model: io.task.model,
-    timeoutMinutes: io.task.timeout,
-    transcriptFile: f.transcript,
-    turn,
-    task: io.task.name
-  });
+  let result;
+  try {
+    result = await adapter.run({
+      checkout: io.checkout,
+      promptFile: f.prompt,
+      skills: io.task.skills,
+      planSchemaFile: f.planSchema,
+      planFile: f.plan,
+      permission: io.task.permission,
+      model: io.task.model,
+      timeoutMinutes: io.task.timeout,
+      transcriptFile: f.transcript,
+      turn,
+      task: io.task.name
+    });
+  } catch (error) {
+    const agentError = `the ${adapter.name} adapter failed: ${error instanceof Error ? error.message : String(error)}`;
+    io.log(`::error::${agentError}`);
+    saveState(io, { ...state, agentStatus: "failed", checksPassed: void 0, turnsRun: turn, agentError });
+    return;
+  }
   saveState(io, {
     ...state,
     agentStatus: result.status,
@@ -16603,9 +16619,10 @@ async function main() {
   if (decision.kind !== "run") return;
   const [owner, repo] = required("GITHUB_REPOSITORY").split("/");
   const checkout = required("GITHUB_WORKSPACE");
+  const base = env("FACTORY_CONFIG_ROOT") ?? checkout;
   const temp = required("RUNNER_TEMP");
   const loaded = await loadConfig({
-    clientRoot: checkout,
+    clientRoot: base,
     factoryRoot: required("FACTORY_ROOT"),
     fetchRepo: gitFetcher({ cacheDir: join9(temp, "factory-templates") })
   });
