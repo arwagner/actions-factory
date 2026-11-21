@@ -76,10 +76,14 @@ export class FakeGitHub {
         const next = this.pullSequence[number]?.shift();
         if (next) {
           this.pulls[number] = next;
-          return { headRepo: "o/r", baseRepo: "o/r", headSha: "headsha", baseSha: "basesha", ...next };
+          return next;
         }
         const pull = this.pulls[number] ?? { head: "feature", mergeable: false };
-        return { pending: false, headRepo: "o/r", baseRepo: "o/r", headSha: "headsha", baseSha: "basesha", ...pull };
+        return { pending: false, head: pull.head, mergeable: pull.mergeable, ...(pull.pending === undefined ? {} : { pending: pull.pending }) };
+      },
+      pullInfo: async (number) => {
+        const pull = this.pulls[number] ?? { head: "feature", mergeable: false };
+        return { head: pull.head, headSha: "headsha", baseSha: "basesha", headRepo: pull.headRepo === undefined ? "o/r" : pull.headRepo, baseRepo: "o/r" };
       },
       createPull: async (pull) => {
         record("createPull", pull);

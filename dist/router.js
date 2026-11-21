@@ -14954,16 +14954,22 @@ function gitHubApi(token, owner, repo, baseUrl = "https://api.github.com") {
     },
     async getPull(number) {
       const pull = await call("GET", `/pulls/${number}`);
-      const checks = await call("GET", `/commits/${pull.head.sha}/check-runs?per_page=100`);
-      const running = checks.check_runs.some((c) => c.status !== "completed");
+      const checks = await call("GET", `/commits/${pull.head.sha}/check-runs?per_page=100`, void 0, [403]);
+      const running = checks?.check_runs.some((c) => c.status !== "completed") ?? false;
+      return {
+        head: pull.head.ref,
+        mergeable: pull.mergeable === true && pull.mergeable_state === "clean",
+        pending: pull.mergeable === null || pull.mergeable_state === "unknown" || running
+      };
+    },
+    async pullInfo(number) {
+      const pull = await call("GET", `/pulls/${number}`);
       return {
         head: pull.head.ref,
         headSha: pull.head.sha,
         baseSha: pull.base.sha,
         headRepo: pull.head.repo?.full_name ?? null,
-        baseRepo: pull.base.repo.full_name,
-        mergeable: pull.mergeable === true && pull.mergeable_state === "clean",
-        pending: pull.mergeable === null || pull.mergeable_state === "unknown" || running
+        baseRepo: pull.base.repo.full_name
       };
     },
     async createPull(pull) {
@@ -16310,7 +16316,7 @@ async function runRouter(io) {
     io.setOutput("task", decision.task);
     io.setOutput("agent-job", JSON.stringify(agentJobSettings(loaded.config, decision.task)));
     if (decision.subject.kind === "pr") {
-      const pull = await reader.getPull(decision.subject.number);
+      const pull = await reader.pullInfo(decision.subject.number);
       io.setOutput("head-sha", pull.headSha);
       io.setOutput("base-sha", pull.baseSha);
     }
@@ -16327,7 +16333,7 @@ async function resolveSweptItem(event, reader) {
   const label = { name: trigger };
   const sender = { login: await reader.labeler(number, trigger) ?? "(unknown)" };
   if (!item.isPullRequest) return { name: "issues", payload: { action: "labeled", label, issue: { number }, sender } };
-  const pull = await reader.getPull(number);
+  const pull = await reader.pullInfo(number);
   const pullRequest = { number, head: { repo: pull.headRepo ? { full_name: pull.headRepo } : null }, base: { repo: { full_name: pull.baseRepo } } };
   return { name: "pull_request_target", payload: { action: "labeled", label, pull_request: pullRequest, sender } };
 }
