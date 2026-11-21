@@ -34,8 +34,10 @@ The factory wraps each CLI directly instead of using the vendors' own Actions. T
 | Adapter | Credential | Notes |
 |---|---|---|
 | `claude` (default) | `ANTHROPIC_API_KEY`, or the client's own `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token` | Headless `claude -p`, stream-json transcript, cost in output. A subscription token must be the client's own, in their own repo; the factory never holds or brokers one. |
-| `codex` | `OPENAI_API_KEY`, or a Business/Enterprise `CODEX_ACCESS_TOKEN` | `codex exec --json`, tokens only. No ChatGPT subscription `auth.json`: that would need a write-back loop and a token able to write secrets. |
-| `copilot` | `COPILOT_GITHUB_TOKEN`, a fine-grained token with only Copilot Requests | Bills the client's Copilot seats; no third-party secret. |
+| `codex` | `OPENAI_API_KEY`, or a Business/Enterprise `CODEX_ACCESS_TOKEN` | `codex exec --json`, tokens only. The key reaches the CLI as `CODEX_API_KEY` (what `exec` reads); an access token is logged in with `codex login --with-access-token`, into a temporary `CODEX_HOME` that also holds the skills. Read-only uses Codex's own `--sandbox read-only`. No ChatGPT subscription `auth.json`: that would need a write-back loop and a token able to write secrets. |
+| `copilot` | `COPILOT_GITHUB_TOKEN`, a fine-grained token with only Copilot Requests | `copilot -p --output-format json`; bills the client's Copilot seats; no third-party secret. The built-in GitHub MCP server is off, and skills go in a temporary `COPILOT_HOME`. Read-only denies the write tool; Copilot has no OS sandbox. |
+
+Codex and Copilot have no schema flag the factory relies on: the agent writes `plan.json` as the prompt asks, or, in a read-only run, gives the plan as its final message, which the adapter writes for it.
 
 Gemini and Antigravity are left out until their CI auth and terms are clear.
 

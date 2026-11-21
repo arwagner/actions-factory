@@ -16071,9 +16071,17 @@ function subjectFor(task, item) {
 // src/agents/claude.ts
 var CLAUDE_CODE_VERSION = "2.1.319";
 
+// src/agents/codex.ts
+var CODEX_VERSION = "0.167.0";
+
+// src/agents/copilot.ts
+var COPILOT_VERSION = "1.0.107";
+
 // src/agents/versions.ts
 var CLI_VERSIONS = {
   claude: CLAUDE_CODE_VERSION,
+  codex: CODEX_VERSION,
+  copilot: COPILOT_VERSION,
   fake: "none"
 };
 
