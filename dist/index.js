@@ -15996,6 +15996,8 @@ function gitHubApi(token, owner, repo, baseUrl = "https://api.github.com") {
       const running = checks.check_runs.some((c) => c.status !== "completed");
       return {
         head: pull.head.ref,
+        headSha: pull.head.sha,
+        baseSha: pull.base.sha,
         headRepo: pull.head.repo?.full_name ?? null,
         baseRepo: pull.base.repo.full_name,
         mergeable: pull.mergeable === true && pull.mergeable_state === "clean",
@@ -16613,6 +16615,11 @@ async function runRouter(io) {
   if (decision.kind === "run") {
     io.setOutput("task", decision.task);
     io.setOutput("agent-job", JSON.stringify(agentJobSettings(loaded.config, decision.task)));
+    if (decision.subject.kind === "pr") {
+      const pull = await reader.getPull(decision.subject.number);
+      io.setOutput("head-sha", pull.headSha);
+      io.setOutput("base-sha", pull.baseSha);
+    }
   }
   return decision;
 }

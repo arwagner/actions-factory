@@ -133,6 +133,12 @@ export async function runRouter(io: RouterIO): Promise<Decision> {
   if (decision.kind === "run") {
     io.setOutput("task", decision.task);
     io.setOutput("agent-job", JSON.stringify(agentJobSettings(loaded.config, decision.task)));
+    // A PR task works on the PR's head, read now so every job uses the same commit.
+    if (decision.subject.kind === "pr") {
+      const pull = await reader.getPull(decision.subject.number);
+      io.setOutput("head-sha", pull.headSha);
+      io.setOutput("base-sha", pull.baseSha);
+    }
   }
   return decision;
 }

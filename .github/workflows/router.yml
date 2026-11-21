@@ -37,6 +37,8 @@ jobs:
       decision: ${{ steps.route.outputs.decision }}
       task: ${{ steps.route.outputs.task }}
       agent-job: ${{ steps.route.outputs.agent-job }}
+      head-sha: ${{ steps.route.outputs.head-sha }}
+      base-sha: ${{ steps.route.outputs.base-sha }}
       doctor-agents: ${{ steps.route.outputs.doctor-agents }}
       factory-repository: ${{ steps.factory.outputs.repository }}
       factory-sha: ${{ steps.factory.outputs.sha }}
@@ -141,10 +143,24 @@ jobs:
       FACTORY_REPO_PRIVATE: ${{ github.event.repository.private }}
       DECISION: ${{ needs.route.outputs.decision }}
     steps:
+      # A PR task works on the PR's head (same-repo only: forks are refused before this), with full history so the
+      # merge task can merge the base in. Everything else works on the default branch.
       - name: Check out the client repo
         uses: actions/checkout@v5
         with:
+          ref: ${{ needs.route.outputs.head-sha }}
+          fetch-depth: ${{ needs.route.outputs.head-sha != '' && 0 || 1 }}
           persist-credentials: false
+
+      # The config always comes from the base, outside the work tree, so a PR can't change the rules it runs under.
+      - name: Take the config from the base
+        if: needs.route.outputs.head-sha != ''
+        env:
+          BASE_SHA: ${{ needs.route.outputs.base-sha }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/factory-base"
+          git archive "$BASE_SHA" | tar -x -C "$RUNNER_TEMP/factory-base"
+          echo "FACTORY_CONFIG_ROOT=$RUNNER_TEMP/factory-base" >> "$GITHUB_ENV"
 
       - name: Fetch the factory at the pinned commit
         env:
@@ -282,10 +298,24 @@ jobs:
     if: always() && needs.route.outputs.task != ''
     runs-on: ubuntu-latest
     steps:
+      # A PR task works on the PR's head (same-repo only: forks are refused before this), with full history so the
+      # merge task can merge the base in. Everything else works on the default branch.
       - name: Check out the client repo
         uses: actions/checkout@v5
         with:
+          ref: ${{ needs.route.outputs.head-sha }}
+          fetch-depth: ${{ needs.route.outputs.head-sha != '' && 0 || 1 }}
           persist-credentials: false
+
+      # The config always comes from the base, outside the work tree, so a PR can't change the rules it runs under.
+      - name: Take the config from the base
+        if: needs.route.outputs.head-sha != ''
+        env:
+          BASE_SHA: ${{ needs.route.outputs.base-sha }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/factory-base"
+          git archive "$BASE_SHA" | tar -x -C "$RUNNER_TEMP/factory-base"
+          echo "FACTORY_CONFIG_ROOT=$RUNNER_TEMP/factory-base" >> "$GITHUB_ENV"
 
       - name: Fetch the factory at the pinned commit
         env:

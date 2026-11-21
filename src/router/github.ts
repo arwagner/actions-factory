@@ -31,7 +31,7 @@ export interface GitHubApi {
    * Head branch name; whether GitHub can merge it now (mergeable, checks green); and whether that may still
    * change (mergeability being computed, or check runs on the head not finished).
    */
-  getPull(number: number): Promise<{ head: string; mergeable: boolean; pending: boolean; headRepo: string | null; baseRepo: string }>;
+  getPull(number: number): Promise<{ head: string; headSha: string; baseSha: string; mergeable: boolean; pending: boolean; headRepo: string | null; baseRepo: string }>;
   createPull(pull: { title: string; body: string; head: string; base: string; draft: boolean }): Promise<number>;
   /** Merges with a merge commit. Throws if GitHub refuses. */
   mergePull(number: number): Promise<void>;
@@ -175,7 +175,7 @@ export function gitHubApi(token: string, owner: string, repo: string, baseUrl = 
     async getPull(number) {
       const pull = (await call("GET", `/pulls/${number}`)) as {
         head: { ref: string; sha: string; repo: { full_name: string } | null };
-        base: { repo: { full_name: string } };
+        base: { sha: string; repo: { full_name: string } };
         mergeable: boolean | null;
         mergeable_state: string;
       };
@@ -183,6 +183,8 @@ export function gitHubApi(token: string, owner: string, repo: string, baseUrl = 
       const running = checks.check_runs.some((c) => c.status !== "completed");
       return {
         head: pull.head.ref,
+        headSha: pull.head.sha,
+        baseSha: pull.base.sha,
         headRepo: pull.head.repo?.full_name ?? null,
         baseRepo: pull.base.repo.full_name,
         mergeable: pull.mergeable === true && pull.mergeable_state === "clean",

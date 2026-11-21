@@ -15789,6 +15789,8 @@ function gitHubApi(token, owner, repo, baseUrl = "https://api.github.com") {
       const running = checks.check_runs.some((c) => c.status !== "completed");
       return {
         head: pull.head.ref,
+        headSha: pull.head.sha,
+        baseSha: pull.base.sha,
         headRepo: pull.head.repo?.full_name ?? null,
         baseRepo: pull.base.repo.full_name,
         mergeable: pull.mergeable === true && pull.mergeable_state === "clean",
@@ -16278,9 +16280,10 @@ async function main() {
   const [owner, repo] = required("GITHUB_REPOSITORY").split("/");
   const token = required("FACTORY_TOKEN");
   const checkout = required("GITHUB_WORKSPACE");
+  const base = env("FACTORY_CONFIG_ROOT") ?? checkout;
   const handoff = required("HANDOFF_DIR");
   const loaded = await loadConfig({
-    clientRoot: checkout,
+    clientRoot: base,
     factoryRoot: required("FACTORY_ROOT"),
     fetchRepo: gitFetcher({ cacheDir: join3(required("RUNNER_TEMP"), "factory-templates"), token })
   });

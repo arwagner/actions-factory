@@ -76,10 +76,10 @@ export class FakeGitHub {
         const next = this.pullSequence[number]?.shift();
         if (next) {
           this.pulls[number] = next;
-          return { headRepo: "o/r", baseRepo: "o/r", ...next };
+          return { headRepo: "o/r", baseRepo: "o/r", headSha: "headsha", baseSha: "basesha", ...next };
         }
         const pull = this.pulls[number] ?? { head: "feature", mergeable: false };
-        return { pending: false, headRepo: "o/r", baseRepo: "o/r", ...pull };
+        return { pending: false, headRepo: "o/r", baseRepo: "o/r", headSha: "headsha", baseSha: "basesha", ...pull };
       },
       createPull: async (pull) => {
         record("createPull", pull);
