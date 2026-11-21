@@ -112,7 +112,7 @@ describe("runRouter", () => {
     await runRouter(io({ eventName: "pull_request_target", payload }));
 
     expect(outputs["head-sha"]).toBe("headsha");
-    expect(outputs["base-sha"]).toBe("basesha");
+    expect(outputs["base-ref"]).toBe("main");
   });
 
   it("refuses a label added by someone without write access, and takes the label off", async () => {

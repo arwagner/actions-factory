@@ -16005,7 +16005,7 @@ function gitHubApi(token, owner, repo, baseUrl = "https://api.github.com") {
       return {
         head: pull.head.ref,
         headSha: pull.head.sha,
-        baseSha: pull.base.sha,
+        base: pull.base.ref,
         headRepo: pull.head.repo?.full_name ?? null,
         baseRepo: pull.base.repo.full_name
       };
@@ -16624,7 +16624,7 @@ async function runRouter(io) {
     if (decision.subject.kind === "pr") {
       const pull = await reader.pullInfo(decision.subject.number);
       io.setOutput("head-sha", pull.headSha);
-      io.setOutput("base-sha", pull.baseSha);
+      io.setOutput("base-ref", pull.base);
     }
   }
   return decision;

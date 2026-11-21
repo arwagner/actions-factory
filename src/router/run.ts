@@ -137,7 +137,7 @@ export async function runRouter(io: RouterIO): Promise<Decision> {
     if (decision.subject.kind === "pr") {
       const pull = await reader.pullInfo(decision.subject.number);
       io.setOutput("head-sha", pull.headSha);
-      io.setOutput("base-sha", pull.baseSha);
+      io.setOutput("base-ref", pull.base);
     }
   }
   return decision;

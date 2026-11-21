@@ -33,7 +33,7 @@ export interface GitHubApi {
    */
   getPull(number: number): Promise<{ head: string; mergeable: boolean; pending: boolean }>;
   /** A PR's branches, commits and repos, without its checks: the default token can read this. */
-  pullInfo(number: number): Promise<{ head: string; headSha: string; baseSha: string; headRepo: string | null; baseRepo: string }>;
+  pullInfo(number: number): Promise<{ head: string; headSha: string; base: string; headRepo: string | null; baseRepo: string }>;
   createPull(pull: { title: string; body: string; head: string; base: string; draft: boolean }): Promise<number>;
   /** Merges with a merge commit. Throws if GitHub refuses. */
   mergePull(number: number): Promise<void>;
@@ -196,12 +196,12 @@ export function gitHubApi(token: string, owner: string, repo: string, baseUrl = 
     async pullInfo(number) {
       const pull = (await call("GET", `/pulls/${number}`)) as {
         head: { ref: string; sha: string; repo: { full_name: string } | null };
-        base: { sha: string; repo: { full_name: string } };
+        base: { ref: string; repo: { full_name: string } };
       };
       return {
         head: pull.head.ref,
         headSha: pull.head.sha,
-        baseSha: pull.base.sha,
+        base: pull.base.ref,
         headRepo: pull.head.repo?.full_name ?? null,
         baseRepo: pull.base.repo.full_name,
       };

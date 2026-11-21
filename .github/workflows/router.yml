@@ -38,7 +38,7 @@ jobs:
       task: ${{ steps.route.outputs.task }}
       agent-job: ${{ steps.route.outputs.agent-job }}
       head-sha: ${{ steps.route.outputs.head-sha }}
-      base-sha: ${{ steps.route.outputs.base-sha }}
+      base-ref: ${{ steps.route.outputs.base-ref }}
       doctor-agents: ${{ steps.route.outputs.doctor-agents }}
       factory-repository: ${{ steps.factory.outputs.repository }}
       factory-sha: ${{ steps.factory.outputs.sha }}
@@ -152,14 +152,24 @@ jobs:
           fetch-depth: ${{ needs.route.outputs.head-sha != '' && 0 || 1 }}
           persist-credentials: false
 
-      # The config always comes from the base, outside the work tree, so a PR can't change the rules it runs under.
+      # The PR's base branch: the config comes from it, outside the work tree, so a PR can't change the rules it
+      # runs under; and it's fetched into the work clone as origin/<base>, for the merge task.
+      - name: Check out the pull request's base
+        if: needs.route.outputs.head-sha != ''
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.route.outputs.base-ref }}
+          path: .factory-base
+          fetch-depth: 0
+          persist-credentials: false
+
       - name: Take the config from the base
         if: needs.route.outputs.head-sha != ''
         env:
-          BASE_SHA: ${{ needs.route.outputs.base-sha }}
+          BASE_REF: ${{ needs.route.outputs.base-ref }}
         run: |
-          mkdir -p "$RUNNER_TEMP/factory-base"
-          git archive "$BASE_SHA" | tar -x -C "$RUNNER_TEMP/factory-base"
+          git fetch -q ./.factory-base "+HEAD:refs/remotes/origin/$BASE_REF"
+          mv .factory-base "$RUNNER_TEMP/factory-base"
           echo "FACTORY_CONFIG_ROOT=$RUNNER_TEMP/factory-base" >> "$GITHUB_ENV"
 
       - name: Fetch the factory at the pinned commit
@@ -307,14 +317,24 @@ jobs:
           fetch-depth: ${{ needs.route.outputs.head-sha != '' && 0 || 1 }}
           persist-credentials: false
 
-      # The config always comes from the base, outside the work tree, so a PR can't change the rules it runs under.
+      # The PR's base branch: the config comes from it, outside the work tree, so a PR can't change the rules it
+      # runs under; and it's fetched into the work clone as origin/<base>, for the merge task.
+      - name: Check out the pull request's base
+        if: needs.route.outputs.head-sha != ''
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.route.outputs.base-ref }}
+          path: .factory-base
+          fetch-depth: 0
+          persist-credentials: false
+
       - name: Take the config from the base
         if: needs.route.outputs.head-sha != ''
         env:
-          BASE_SHA: ${{ needs.route.outputs.base-sha }}
+          BASE_REF: ${{ needs.route.outputs.base-ref }}
         run: |
-          mkdir -p "$RUNNER_TEMP/factory-base"
-          git archive "$BASE_SHA" | tar -x -C "$RUNNER_TEMP/factory-base"
+          git fetch -q ./.factory-base "+HEAD:refs/remotes/origin/$BASE_REF"
+          mv .factory-base "$RUNNER_TEMP/factory-base"
           echo "FACTORY_CONFIG_ROOT=$RUNNER_TEMP/factory-base" >> "$GITHUB_ENV"
 
       - name: Fetch the factory at the pinned commit

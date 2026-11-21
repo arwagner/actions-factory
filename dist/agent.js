@@ -16154,7 +16154,7 @@ function gitHubApi(token, owner, repo, baseUrl = "https://api.github.com") {
       return {
         head: pull.head.ref,
         headSha: pull.head.sha,
-        baseSha: pull.base.sha,
+        base: pull.base.ref,
         headRepo: pull.head.repo?.full_name ?? null,
         baseRepo: pull.base.repo.full_name
       };

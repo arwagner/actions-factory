@@ -83,7 +83,7 @@ export class FakeGitHub {
       },
       pullInfo: async (number) => {
         const pull = this.pulls[number] ?? { head: "feature", mergeable: false };
-        return { head: pull.head, headSha: "headsha", baseSha: "basesha", headRepo: pull.headRepo === undefined ? "o/r" : pull.headRepo, baseRepo: "o/r" };
+        return { head: pull.head, headSha: "headsha", base: "main", headRepo: pull.headRepo === undefined ? "o/r" : pull.headRepo, baseRepo: "o/r" };
       },
       createPull: async (pull) => {
         record("createPull", pull);
