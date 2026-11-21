@@ -1,0 +1,3 @@
+# 3. Require a personal access token; labels chain tasks
+
+The factory acts in a client repo with a personal access token the client stores as the `FACTORY_TOKEN` secret. Either kind works: fine-grained is recommended, and classic is the way around org approval, with a warning about how much it can reach. The factory refuses to run without one. A label added with that token starts workflows, so tasks hand off to each other by label, as in aint-farm. GITHUB_TOKEN alone would need no setup, but its label events start nothing, its PRs need a person to approve CI, and it can't change workflow files. Supporting it as a reduced mode would mean a second chaining mechanism and a second set of documented limits, so we don't. A GitHub App is ruled out by ADR 0001.
