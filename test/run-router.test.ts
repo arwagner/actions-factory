@@ -271,4 +271,60 @@ describe("runRouter", () => {
       expect(gh.writes).toEqual([]);
     });
   });
+
+  describe("the doctor", () => {
+    const doctor = (overrides: Partial<RouterIO> = {}) => {
+      const failures: string[] = [];
+      const run = runRouter(io({ eventName: "workflow_dispatch", payload: { inputs: { command: "doctor" } }, setFailed: (m) => failures.push(m), ...overrides }));
+      return run.then((decision) => ({ decision, failures, text: summary.join("\n") }));
+    };
+
+    it("passes a healthy repo: config, token access, labels and stub, and hands the agents to the agent job", async () => {
+      const { failures, text } = await doctor();
+
+      expect(failures).toEqual([]);
+      expect(text).toContain("### actions-factory: doctor: all checks pass");
+      expect(text).toContain("| ✅ | Config | validates; layers: template default → factory.yml |");
+      expect(text).toContain("| ✅ | Token: push branches | allowed |");
+      expect(text).toContain("| ✅ | Labels |");
+      expect(text).toContain("| ✅ | Stub version | v1.0.0, current |");
+      expect(JSON.parse(outputs["doctor-agents"])).toEqual([{ agent: "claude", cliVersion: "2.1.319" }]);
+      expect(gh.calls("createLabel").length).toBeGreaterThan(0);
+    });
+
+    it("names each permission the token lacks, with the fix, and fails the job", async () => {
+      gh.access["factory-token"] = { contents: 403, pullRequests: 403 };
+
+      const { failures, text } = await doctor();
+
+      expect(text).toContain("doctor: 2 problems");
+      expect(text).toContain("| ❌ | Token: push branches | GitHub answered 403<br>**Fix:** Give the token Contents: write.");
+      expect(text).toContain("| ❌ | Token: open pull requests | GitHub answered 403<br>**Fix:** Give the token Pull requests: write.");
+      expect(failures).toEqual(["the doctor found 2 problems; see the run summary"]);
+    });
+
+    it("reports a missing token, a broken config and an old stub together, without stopping at the first", async () => {
+      const clientRoot = tree({ "factory.yml": "schemaVersion: 1\nagent: gemini\n" });
+
+      const { text } = await doctor({ factoryToken: undefined, clientRoot, stubVersion: "0.9.0" });
+
+      expect(text).toContain("| ❌ | Config | `agent` (factory.yml): must be one of");
+      expect(text).toContain("| ❌ | `FACTORY_TOKEN` | not set");
+      expect(text).toContain("| ❌ | Stub version | v0.9.0; the current stub is v1.0.0");
+      expect(JSON.parse(outputs["doctor-agents"])).toEqual([]);
+    });
+
+    it("reports labels it couldn't create instead of crashing", async () => {
+      const api = (token: string) => ({
+        ...gh.api(token),
+        createLabel: async () => {
+          throw new Error("GitHub POST /labels failed: 403");
+        },
+      });
+
+      const { text } = await doctor({ api });
+
+      expect(text).toContain("| ❌ | Labels | couldn't create them: GitHub POST /labels failed: 403");
+    });
+  });
 });

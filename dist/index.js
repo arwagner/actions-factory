@@ -16030,6 +16030,31 @@ function gitHubApi(token, owner, repo, baseUrl = "https://api.github.com") {
     async removeAssignees(issueNumber, logins) {
       await call("DELETE", `/issues/${issueNumber}/assignees`, { assignees: logins });
     },
+    async probeAccess() {
+      const status = async (method, path, body) => {
+        try {
+          const response = await fetch(`${baseUrl}/repos/${owner}/${repo}${path}`, {
+            method,
+            headers: {
+              Authorization: `Bearer ${token}`,
+              Accept: "application/vnd.github+json",
+              "X-GitHub-Api-Version": "2022-11-28",
+              "User-Agent": "actions-factory"
+            },
+            body: body === void 0 ? void 0 : JSON.stringify(body)
+          });
+          return response.status;
+        } catch {
+          return 0;
+        }
+      };
+      return {
+        read: await status("GET", ""),
+        contents: await status("POST", "/git/refs", { ref: "refs/heads/factory-doctor-probe", sha: "0".repeat(40) }),
+        issues: await status("POST", "/issues", { title: "" }),
+        pullRequests: await status("POST", "/pulls", { title: "factory doctor probe", head: "factory-doctor-no-such-branch", base: "factory-doctor-no-such-branch" })
+      };
+    },
     async requestReviewers(pullNumber, logins) {
       await call("POST", `/pulls/${pullNumber}/requested_reviewers`, { reviewers: logins }, [422]);
     }
@@ -16042,8 +16067,8 @@ import { join as join4 } from "node:path";
 
 // src/agents/claude.ts
 import { execFile as execFile2, spawn } from "node:child_process";
-import { cpSync, existsSync as existsSync3, mkdirSync as mkdirSync2, readFileSync as readFileSync2, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { cpSync, existsSync as existsSync3, mkdirSync as mkdirSync2, mkdtempSync as mkdtempSync2, readFileSync as readFileSync2, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join as join3 } from "node:path";
 import { promisify as promisify2 } from "node:util";
 
@@ -16062,6 +16087,27 @@ function claudeAdapter(options = {}) {
   return {
     name: "claude",
     credentials: CREDENTIALS,
+    async ping() {
+      const env = { ...process.env };
+      for (const name of WITHHELD) delete env[name];
+      const secrets = CREDENTIALS.map((name) => process.env[name]).filter((v) => Boolean(v));
+      const { code, stdout, timedOut } = await runCli(await install(), ["-p", "--output-format", "json", "--max-turns", "1"], {
+        cwd: mkdtempSync2(join3(tmpdir(), "factory-doctor-")),
+        env,
+        stdin: "Reply with the single word OK.",
+        timeoutMs: 3 * 6e4
+      });
+      if (timedOut) return { ok: false, detail: "Claude Code didn't answer within 3 minutes" };
+      let result;
+      try {
+        result = JSON.parse(stdout.trim().split("\n").pop() ?? "");
+      } catch {
+        result = void 0;
+      }
+      const said = scrubValues(String(result?.result ?? stdout).trim(), secrets).slice(0, 300);
+      if (code !== 0 || !result || result.is_error) return { ok: false, detail: `Claude Code ${CLAUDE_CODE_VERSION} failed: ${said || `exit ${code}`}` };
+      return { ok: true, detail: `Claude Code ${CLAUDE_CODE_VERSION} answered a test prompt` };
+    },
     async run(input) {
       for (const [name, path] of Object.entries(input.skills)) {
         mkdirSync2(skillsDir, { recursive: true });
@@ -16163,6 +16209,76 @@ function startOfDay(now, timeZone) {
   return new Date(Date.UTC(+parts2.year, +parts2.month - 1, +parts2.day) - offset).toISOString();
 }
 
+// src/router/doctor.ts
+var GETTING_STARTED2 = "https://github.com/arwagner/actions-factory/wiki/Getting-started";
+async function doctorChecks({ loaded, writer, stubVersion, labelsError }) {
+  const checks = [];
+  const stack = loaded.layers.map((l) => l.name).join(" \u2192 ");
+  checks.push(
+    loaded.ok ? { name: "Config", ok: true, detail: `validates; layers: ${stack}` } : {
+      name: "Config",
+      ok: false,
+      detail: loaded.errors.map((e) => `${e.path ? `\`${e.path}\`` : ""}${e.layer ? ` (${e.layer})` : ""}: ${e.message}`).join("<br>"),
+      fix: "Fix `factory.yml` (or the template it names). The config section below shows every layer."
+    }
+  );
+  if (!writer) {
+    checks.push({ name: "`FACTORY_TOKEN`", ok: false, detail: "not set", fix: `Create the token and set the secret, as in ${GETTING_STARTED2}.` });
+  } else {
+    checks.push({ name: "`FACTORY_TOKEN`", ok: true, detail: "set" });
+    checks.push(...accessChecks(await writer.probeAccess()));
+    const tasks = loaded.config.tasks ?? {};
+    const workflowTasks = Object.entries(tasks).filter(([, t]) => t.allowWorkflowChanges).map(([n]) => `\`${n}\``);
+    if (workflowTasks.length > 0) {
+      checks.push({
+        name: "Token: workflows",
+        ok: true,
+        detail: `not checked (it can't be without pushing a workflow). ${workflowTasks.join(", ")} set \`allowWorkflowChanges\`, so the token needs Workflows: write.`
+      });
+    }
+  }
+  if (loaded.ok && writer) {
+    checks.push(
+      labelsError ? { name: "Labels", ok: false, detail: labelsError, fix: "Give the token Issues: write." } : { name: "Labels", ok: true, detail: "every label the config needs exists" }
+    );
+  }
+  checks.push(stubCheck(stubVersion));
+  return checks;
+}
+var ACCESS = [
+  { key: "read", name: "Token: read the repo", permission: "access to this repo (its resource owner and repository access)", allowed: [200] },
+  // Each write probe sends input GitHub rejects, so it writes nothing: 403 means no permission, 422 means allowed.
+  { key: "contents", name: "Token: push branches", permission: "Contents: write", allowed: [422] },
+  { key: "issues", name: "Token: write issues", permission: "Issues: write", allowed: [422] },
+  { key: "pullRequests", name: "Token: open pull requests", permission: "Pull requests: write", allowed: [422] }
+];
+function accessChecks(probe) {
+  return ACCESS.map(({ key, name, permission, allowed }) => {
+    const status = probe[key];
+    if (allowed.includes(status)) return { name, ok: true, detail: "allowed" };
+    const detail = status === 401 ? "GitHub rejected the token (401): expired or revoked" : status ? `GitHub answered ${status}` : "no answer from GitHub";
+    const fix = status === 401 ? "Create a new token and update the secret." : `Give the token ${permission}. In an org, an owner may need to approve it.`;
+    return { name, ok: false, detail, fix };
+  });
+}
+function stubCheck(stubVersion) {
+  const name = "Stub version";
+  const fix = `Copy the current stub (v${STUB_VERSION}) from ${GETTING_STARTED2}.`;
+  if (!stubVersion) return { name, ok: false, detail: "the stub declares no version", fix };
+  if (stubVersion.replace(/^v/, "") !== STUB_VERSION) return { name, ok: false, detail: `v${stubVersion.replace(/^v/, "")}; the current stub is v${STUB_VERSION}`, fix };
+  return { name, ok: true, detail: `v${STUB_VERSION}, current` };
+}
+function doctorAgents(loaded) {
+  if (!loaded.ok) return [];
+  const tasks = loaded.config.tasks ?? {};
+  const agents = /* @__PURE__ */ new Set([loaded.config.agent, ...Object.values(tasks).flatMap((t) => t.agent ?? [])]);
+  return [...agents].sort().map((agent) => ({ agent, cliVersion: CLI_VERSIONS[agent] ?? "none" }));
+}
+function renderChecks(checks) {
+  const rows = checks.map((c) => `| ${c.ok ? "\u2705" : "\u274C"} | ${c.name} | ${c.detail}${c.fix ? `<br>**Fix:** ${c.fix}` : ""} |`);
+  return ["| | Check | Result |", "|---|---|---|", ...rows].join("\n");
+}
+
 // src/router/tick.ts
 var RUN_DISPATCH = "factory-run";
 var TICK_MS = 15 * 6e4;
@@ -16250,15 +16366,25 @@ async function runRouter(io) {
   if (decision.kind === "run" && "number" in decision.subject) {
     decision = await applyLimits(decision, io, loaded, reader);
   }
+  const doctor = decision.kind === "command" && decision.command === "doctor";
+  let labelsError;
   if (writer && loaded.ok && decision.kind !== "ignore") {
     try {
       await ensureLabels(reader, writer, loaded.config);
     } catch (error) {
       const reason2 = error instanceof Error ? error.message : String(error);
-      throw new Error(
-        `couldn't create labels with FACTORY_TOKEN (${reason2}). A 403 or 404 here usually means the token can't write this repo: check its resource owner, repository access, and Issues permission (and org approval).`
-      );
+      if (!doctor) {
+        throw new Error(
+          `couldn't create labels with FACTORY_TOKEN (${reason2}). A 403 or 404 here usually means the token can't write this repo: check its resource owner, repository access, and Issues permission (and org approval).`
+        );
+      }
+      labelsError = `couldn't create them: ${reason2}`;
     }
+  }
+  let checks;
+  if (doctor) {
+    checks = await doctorChecks({ loaded, writer, stubVersion: io.stubVersion, labelsError });
+    io.setOutput("doctor-agents", JSON.stringify(doctorAgents(loaded)));
   }
   let tickReport;
   if (decision.kind === "sweep" && writer) {
@@ -16278,7 +16404,9 @@ async function runRouter(io) {
     }
     await postRefusal(decision, { io, loaded, reader, writer, trigger });
   }
-  io.summary(summaryFor(decision, loaded, tickReport));
+  io.summary(summaryFor(decision, loaded, tickReport, checks));
+  const failed = checks?.filter((c) => !c.ok).length ?? 0;
+  if (failed > 0) io.setFailed?.(`the doctor found ${failed} problem${failed === 1 ? "" : "s"}; see the run summary`);
   io.setOutput("decision", JSON.stringify(decision));
   if (decision.kind === "run") {
     io.setOutput("task", decision.task);
@@ -16372,8 +16500,11 @@ async function ensureLabels(reader, writer, config) {
     }
   }
 }
-function summaryFor(decision, loaded, tickReport) {
-  const lines = [`### actions-factory: ${headline(decision)}`, ""];
+function summaryFor(decision, loaded, tickReport, checks) {
+  const failed = checks?.filter((c) => !c.ok).length;
+  const title = checks ? `doctor: ${failed ? `${failed} problem${failed === 1 ? "" : "s"}` : "all checks pass"}` : headline(decision);
+  const lines = [`### actions-factory: ${title}`, ""];
+  if (checks) lines.push(renderChecks(checks), "", "The agent credentials are checked in the doctor's agent job.", "");
   if (tickReport) lines.push(tickReport.length > 0 ? tickReport.join("\n") : "Nothing is due or waiting.", "");
   for (const warning of decision.warnings) lines.push(`> [!WARNING]`, `> ${warning}`, "");
   if (decision.kind === "refuse") lines.push(decision.message, "");
@@ -16388,7 +16519,7 @@ function headline(decision) {
     case "refuse":
       return `refused (${decision.code})`;
     case "command":
-      return decision.command === "show-config" ? "show-config" : `${decision.command} (not available yet)`;
+      return decision.command;
     case "sweep":
       return "tick";
     case "defer":
@@ -16762,6 +16893,9 @@ import { dirname as dirname2, join as join5 } from "node:path";
 var fakeAdapter = {
   name: "fake",
   credentials: [],
+  async ping() {
+    return { ok: true, detail: "the fake agent needs no credential" };
+  },
   async run(input) {
     const dir = join5(input.checkout, ".factory/fake");
     const perTurn = join5(dir, `${input.task}.turn${input.turn}.json`);

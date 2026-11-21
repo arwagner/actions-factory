@@ -7,6 +7,7 @@ import type { GitHubApi, Label } from "./github.js";
 import { type Decision, route } from "./route.js";
 import { CLI_VERSIONS } from "../agents/versions.js";
 import { countRuns, LOOP_BRAKE, startOfDay } from "./limits.js";
+import { type Check, doctorAgents, doctorChecks, renderChecks } from "./doctor.js";
 import { RUN_DISPATCH, tick } from "./tick.js";
 import { MIN_STUB_VERSION } from "./version.js";
 
@@ -32,6 +33,8 @@ export interface RouterIO {
   /** This run's id, left out of today's run count. */
   runId?: number;
   now?: Date;
+  /** Marks the job failed after it reports, as the doctor does when a check fails. */
+  setFailed?: (message: string) => void;
 }
 
 const BLOCKED: Label = { name: "agent:blocked", color: "b60205", description: "The factory stopped; see its comment" };
@@ -77,17 +80,28 @@ export async function runRouter(io: RouterIO): Promise<Decision> {
     decision = await applyLimits(decision, io, loaded, reader);
   }
 
+  const doctor = decision.kind === "command" && decision.command === "doctor";
+  let labelsError: string | undefined;
   if (writer && loaded.ok && decision.kind !== "ignore") {
     try {
       await ensureLabels(reader, writer, loaded.config);
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
-      // eslint-disable-next-line preserve-caught-error -- the message is the whole story; no secrets in it
-      throw new Error(
-        `couldn't create labels with FACTORY_TOKEN (${reason}). A 403 or 404 here usually means the token can't write ` +
-          "this repo: check its resource owner, repository access, and Issues permission (and org approval).",
-      );
+      if (!doctor) {
+        // eslint-disable-next-line preserve-caught-error -- the message is the whole story; no secrets in it
+        throw new Error(
+          `couldn't create labels with FACTORY_TOKEN (${reason}). A 403 or 404 here usually means the token can't write ` +
+            "this repo: check its resource owner, repository access, and Issues permission (and org approval).",
+        );
+      }
+      labelsError = `couldn't create them: ${reason}`;
     }
+  }
+
+  let checks: Check[] | undefined;
+  if (doctor) {
+    checks = await doctorChecks({ loaded, writer, stubVersion: io.stubVersion, labelsError });
+    io.setOutput("doctor-agents", JSON.stringify(doctorAgents(loaded)));
   }
 
   let tickReport: string[] | undefined;
@@ -110,7 +124,9 @@ export async function runRouter(io: RouterIO): Promise<Decision> {
     await postRefusal(decision, { io, loaded, reader, writer, trigger });
   }
 
-  io.summary(summaryFor(decision, loaded, tickReport));
+  io.summary(summaryFor(decision, loaded, tickReport, checks));
+  const failed = checks?.filter((c) => !c.ok).length ?? 0;
+  if (failed > 0) io.setFailed?.(`the doctor found ${failed} problem${failed === 1 ? "" : "s"}; see the run summary`);
   io.setOutput("decision", JSON.stringify(decision));
   if (decision.kind === "run") {
     io.setOutput("task", decision.task);
@@ -228,8 +244,11 @@ async function ensureLabels(reader: GitHubApi, writer: GitHubApi, config: Record
   }
 }
 
-function summaryFor(decision: Decision, loaded: LoadResult, tickReport?: string[]): string {
-  const lines = [`### actions-factory: ${headline(decision)}`, ""];
+function summaryFor(decision: Decision, loaded: LoadResult, tickReport?: string[], checks?: Check[]): string {
+  const failed = checks?.filter((c) => !c.ok).length;
+  const title = checks ? `doctor: ${failed ? `${failed} problem${failed === 1 ? "" : "s"}` : "all checks pass"}` : headline(decision);
+  const lines = [`### actions-factory: ${title}`, ""];
+  if (checks) lines.push(renderChecks(checks), "", "The agent credentials are checked in the doctor's agent job.", "");
   if (tickReport) lines.push(tickReport.length > 0 ? tickReport.join("\n") : "Nothing is due or waiting.", "");
   for (const warning of decision.warnings) lines.push(`> [!WARNING]`, `> ${warning}`, "");
   if (decision.kind === "refuse") lines.push(decision.message, "");
@@ -245,7 +264,7 @@ function headline(decision: Decision): string {
     case "refuse":
       return `refused (${decision.code})`;
     case "command":
-      return decision.command === "show-config" ? "show-config" : `${decision.command} (not available yet)`;
+      return decision.command;
     case "sweep":
       return "tick";
     case "defer":

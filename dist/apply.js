@@ -15823,6 +15823,31 @@ function gitHubApi(token, owner, repo, baseUrl = "https://api.github.com") {
     async removeAssignees(issueNumber, logins) {
       await call("DELETE", `/issues/${issueNumber}/assignees`, { assignees: logins });
     },
+    async probeAccess() {
+      const status = async (method, path, body) => {
+        try {
+          const response = await fetch(`${baseUrl}/repos/${owner}/${repo}${path}`, {
+            method,
+            headers: {
+              Authorization: `Bearer ${token}`,
+              Accept: "application/vnd.github+json",
+              "X-GitHub-Api-Version": "2022-11-28",
+              "User-Agent": "actions-factory"
+            },
+            body: body === void 0 ? void 0 : JSON.stringify(body)
+          });
+          return response.status;
+        } catch {
+          return 0;
+        }
+      };
+      return {
+        read: await status("GET", ""),
+        contents: await status("POST", "/git/refs", { ref: "refs/heads/factory-doctor-probe", sha: "0".repeat(40) }),
+        issues: await status("POST", "/issues", { title: "" }),
+        pullRequests: await status("POST", "/pulls", { title: "factory doctor probe", head: "factory-doctor-no-such-branch", base: "factory-doctor-no-such-branch" })
+      };
+    },
     async requestReviewers(pullNumber, logins) {
       await call("POST", `/pulls/${pullNumber}/requested_reviewers`, { reviewers: logins }, [422]);
     }

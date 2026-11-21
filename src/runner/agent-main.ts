@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { appendFileSync } from "node:fs";
 import { join } from "node:path";
 import { ADAPTERS } from "../agents/index.js";
 import { gitFetcher } from "../config/fetch.js";
@@ -6,8 +7,9 @@ import { loadConfig } from "../config/load.js";
 import { gitHubApi } from "../router/github.js";
 import type { Decision } from "../router/route.js";
 import { type AgentJobIO, type AgentTask, handoff, prepare, runChecks, runTurn } from "./agent-job.js";
+import { doctorAgent } from "./doctor-agent.js";
 
-/** The agent job's entrypoint: `agent.js prepare | turn <n> | checks <n> | handoff`. */
+/** The agent job's entrypoint: `agent.js prepare | turn <n> | checks <n> | handoff`, or `agent.js doctor` in the doctor's agent job. */
 async function main(): Promise<void> {
   const env = (name: string) => process.env[name] || undefined;
   const required = (name: string) => {
@@ -16,6 +18,16 @@ async function main(): Promise<void> {
     return value;
   };
   const [step, n] = process.argv.slice(2);
+  if (step === "doctor") {
+    const ok = await doctorAgent({
+      agent: required("AGENT"),
+      adapters: ADAPTERS,
+      env: process.env,
+      summary: (markdown) => appendFileSync(required("GITHUB_STEP_SUMMARY"), `${markdown}\n`),
+    });
+    if (!ok) process.exitCode = 1;
+    return;
+  }
   const decision = JSON.parse(required("DECISION")) as Decision;
   if (decision.kind !== "run") return;
   const [owner, repo] = required("GITHUB_REPOSITORY").split("/");

@@ -1,6 +1,6 @@
 import { execFile, spawn } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { scrubValues } from "./scrub.js";
@@ -28,6 +28,27 @@ export function claudeAdapter(options: ClaudeOptions = {}): Adapter {
   return {
     name: "claude",
     credentials: CREDENTIALS,
+    async ping() {
+      const env = { ...process.env };
+      for (const name of WITHHELD) delete env[name];
+      const secrets = CREDENTIALS.map((name) => process.env[name]).filter((v): v is string => Boolean(v));
+      const { code, stdout, timedOut } = await runCli(await install(), ["-p", "--output-format", "json", "--max-turns", "1"], {
+        cwd: mkdtempSync(join(tmpdir(), "factory-doctor-")),
+        env,
+        stdin: "Reply with the single word OK.",
+        timeoutMs: 3 * 60_000,
+      });
+      if (timedOut) return { ok: false, detail: "Claude Code didn't answer within 3 minutes" };
+      let result: { is_error?: boolean; result?: string; total_cost_usd?: number } | undefined;
+      try {
+        result = JSON.parse(stdout.trim().split("\n").pop() ?? "");
+      } catch {
+        result = undefined;
+      }
+      const said = scrubValues(String(result?.result ?? stdout).trim(), secrets).slice(0, 300);
+      if (code !== 0 || !result || result.is_error) return { ok: false, detail: `Claude Code ${CLAUDE_CODE_VERSION} failed: ${said || `exit ${code}`}` };
+      return { ok: true, detail: `Claude Code ${CLAUDE_CODE_VERSION} answered a test prompt` };
+    },
     async run(input) {
       for (const [name, path] of Object.entries(input.skills)) {
         mkdirSync(skillsDir, { recursive: true });

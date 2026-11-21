@@ -9,6 +9,8 @@ export class FakeGitHub {
   /** Who added a label, keyed `number:label`, as the issue events API reports it. */
   labelers: Record<string, string> = {};
   ticks: Array<{ id: number; createdAt: string; conclusion: string | null }> = [];
+  /** What `probeAccess` reports, per token. Defaults to everything allowed. */
+  access: Record<string, Partial<{ read: number; contents: number; issues: number; pullRequests: number }>> = {};
   search: Array<{ number: number; title: string; body: string }> = [];
   runs: Array<{ id: number; title: string; conclusion: string | null; status?: string }> = [];
   pulls: Record<number, { head: string; mergeable: boolean; pending?: boolean; headRepo?: string | null }> = {};
@@ -53,6 +55,7 @@ export class FakeGitHub {
           .sort((a, b) => a.number - b.number),
       labeler: async (number, label) => this.labelers[`${number}:${label}`],
       listTicks: async () => structuredClone(this.ticks),
+      probeAccess: async () => ({ read: 200, contents: 422, issues: 422, pullRequests: 422, ...this.access[token] }),
       dispatch: async (eventType, payload) => {
         record("dispatch", { eventType, payload });
       },

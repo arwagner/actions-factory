@@ -44,6 +44,11 @@ export interface GitHubApi {
   addAssignees(issueNumber: number, logins: string[]): Promise<void>;
   removeAssignees(issueNumber: number, logins: string[]): Promise<void>;
   requestReviewers(pullNumber: number, logins: string[]): Promise<void>;
+  /**
+   * What this token may do, without writing: reads the repo, then sends a branch, an issue and a PR that GitHub
+   * rejects. GitHub checks permission before input, so each write answers 403 without it and 422 with it.
+   */
+  probeAccess(): Promise<{ read: number; contents: number; issues: number; pullRequests: number }>;
 }
 
 /** A fetch-based client for `owner/repo`. */
@@ -217,6 +222,31 @@ export function gitHubApi(token: string, owner: string, repo: string, baseUrl = 
     },
     async removeAssignees(issueNumber, logins) {
       await call("DELETE", `/issues/${issueNumber}/assignees`, { assignees: logins });
+    },
+    async probeAccess() {
+      const status = async (method: string, path: string, body?: unknown) => {
+        try {
+          const response = await fetch(`${baseUrl}/repos/${owner}/${repo}${path}`, {
+            method,
+            headers: {
+              Authorization: `Bearer ${token}`,
+              Accept: "application/vnd.github+json",
+              "X-GitHub-Api-Version": "2022-11-28",
+              "User-Agent": "actions-factory",
+            },
+            body: body === undefined ? undefined : JSON.stringify(body),
+          });
+          return response.status;
+        } catch {
+          return 0;
+        }
+      };
+      return {
+        read: await status("GET", ""),
+        contents: await status("POST", "/git/refs", { ref: "refs/heads/factory-doctor-probe", sha: "0".repeat(40) }),
+        issues: await status("POST", "/issues", { title: "" }),
+        pullRequests: await status("POST", "/pulls", { title: "factory doctor probe", head: "factory-doctor-no-such-branch", base: "factory-doctor-no-such-branch" }),
+      };
     },
     async requestReviewers(pullNumber, logins) {
       await call("POST", `/pulls/${pullNumber}/requested_reviewers`, { reviewers: logins }, [422]);

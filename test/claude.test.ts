@@ -98,4 +98,29 @@ describe("claude adapter", () => {
     const output = await claudeAdapter({ install: async () => slow.bin, skillsDir: tree({}) }).run(input({ timeoutMinutes: 0.003 }));
     expect(output.status).toBe("timed-out");
   });
+
+  describe("ping, for the doctor", () => {
+    it("passes when Claude Code answers a tiny prompt, with no GitHub token in its env", async () => {
+      const cli = fakeCli(JSON.stringify({ type: "result", is_error: false, result: "OK" }));
+      process.env.CLAUDE_CODE_OAUTH_TOKEN = "oauth-secret";
+      process.env.FACTORY_TOKEN = "factory-secret";
+
+      const ping = await claudeAdapter({ install: async () => cli.bin }).ping();
+
+      expect(ping).toEqual({ ok: true, detail: "Claude Code 2.1.319 answered a test prompt" });
+      expect(cli.read("args").split("\n").slice(0, 3)).toEqual(["-p", "--output-format", "json"]);
+      expect(cli.read("env")).not.toContain("factory-secret");
+    });
+
+    it("fails with what Claude Code said, minus the credential", async () => {
+      process.env.ANTHROPIC_API_KEY = "sk-ant-secret";
+      const cli = fakeCli(JSON.stringify({ type: "result", is_error: true, result: "Invalid API key sk-ant-secret" }));
+
+      const ping = await claudeAdapter({ install: async () => cli.bin }).ping();
+
+      expect(ping.ok).toBe(false);
+      expect(ping.detail).toContain("Invalid API key");
+      expect(ping.detail).not.toContain("sk-ant-secret");
+    });
+  });
 });

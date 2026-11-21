@@ -10,6 +10,9 @@ import type { Adapter } from "./types.js";
 export const fakeAdapter: Adapter = {
   name: "fake",
   credentials: [],
+  async ping() {
+    return { ok: true, detail: "the fake agent needs no credential" };
+  },
   async run(input) {
     const dir = join(input.checkout, ".factory/fake");
     const perTurn = join(dir, `${input.task}.turn${input.turn}.json`);
