@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/arwagner/actions-factory/schema/factory.schema.json",
+  "title": "factory.yml",
+  "description": "The client repo's factory config, `schemaVersion: 1`. The last layer on top of its template.",
+  "type": "object",
+  "required": ["schemaVersion"],
+  "allOf": [{ "$ref": "defs.schema.json#/$defs/topLevel" }],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "template": { "$ref": "defs.schema.json#/$defs/templateRef", "default": "default" }
+  },
+  "unevaluatedProperties": false
+}
