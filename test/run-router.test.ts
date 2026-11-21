@@ -81,6 +81,19 @@ describe("runRouter", () => {
     expect(gh.writes.every((w) => w.token === "factory-token")).toBe(true);
   });
 
+  it("starts the run summary: the linked subject, task, template, factory version and agent", async () => {
+    await runRouter(io({ runUrl: "https://github.com/acme/app/actions/runs/9", factorySha: "abcdef1234567890" }));
+
+    const text = summary.join("\n");
+    expect(text).toContain("### actions-factory: implement on #42");
+    expect(text).toContain("| Subject | issue [#42](https://github.com/acme/app/issues/42) |");
+    expect(text).toContain("| Task | `implement`, started by agent:implement (@ana) |");
+    expect(text).toContain("| Template | template default → factory.yml |");
+    expect(text).toContain("| Factory | v1.2.0 (`abcdef1`) |");
+    expect(text).toContain("| Agent | claude 2.1.319, model the CLI's default |");
+    expect(text).toContain("<summary>Factory config: template default → factory.yml</summary>");
+  });
+
   it("refuses a label added by someone without write access, and takes the label off", async () => {
     const decision = await runRouter(
       io({ payload: { action: "labeled", label: { name: "agent:implement" }, issue: { number: 42 }, sender: { login: "tri" } } }),

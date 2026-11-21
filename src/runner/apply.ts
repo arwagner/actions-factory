@@ -37,7 +37,8 @@ export interface ApplyIO {
   sleep?: (ms: number) => Promise<void>;
 }
 
-export type ApplyResult = { ok: true; outcome: string } | { ok: false; reason: string };
+/** How the run ended, and every write it made, in order, for the run summary. The status comment isn't listed. */
+export type ApplyResult = ({ ok: true; outcome: string } | { ok: false; reason: string }) & { writes: string[] };
 
 const BLOCKED = "agent:blocked";
 const WORKFLOWS = ".github/workflows/";
@@ -50,20 +51,82 @@ class Refusal extends Error {}
  */
 export async function applyRun(io: ApplyIO): Promise<ApplyResult> {
   const target = statusTarget(io.subject);
+  const writes: string[] = [];
+  const recorded: ApplyIO = {
+    ...io,
+    api: recording(io.api, writes),
+    git: {
+      changedFiles: () => io.git.changedFiles(),
+      push: async (branch) => {
+        await io.git.push(branch);
+        writes.push(`pushed \`${branch}\``);
+      },
+    },
+    runHook: async (path, env) => {
+      await io.runHook(path, env);
+      writes.push("ran the `after` hook");
+    },
+  };
   try {
-    const outcome = await applyWrites(io);
+    const outcome = await applyWrites(recorded);
     if (target !== undefined) await upsertStatus(io, target, `✅ \`${io.taskName}\`: **${outcome}**`);
-    return { ok: true, outcome };
+    return { ok: true, outcome, writes };
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     if (target !== undefined) {
-      await io.api.addLabels(target, [BLOCKED]);
-      if (io.assignee) await io.api.addAssignees(target, [io.assignee]);
+      await recorded.api.addLabels(target, [BLOCKED]);
+      if (io.assignee) await recorded.api.addAssignees(target, [io.assignee]);
       const retry = io.task.label ? ` To retry, add \`${io.task.label}\` again.` : "";
       await upsertStatus(io, target, `⛔ \`${io.taskName}\` stopped: ${reason}${retry}`);
     }
-    return { ok: false, reason };
+    return { ok: false, reason, writes };
   }
+}
+
+/** The same API, noting each write it makes in plain words. */
+function recording(api: GitHubApi, writes: string[]): GitHubApi {
+  const names = (list: string[]) => list.map((n) => `\`${n}\``).join(", ");
+  return {
+    ...api,
+    comment: async (n, body) => {
+      await api.comment(n, body);
+      writes.push(`commented on #${n}`);
+    },
+    addLabels: async (n, labels) => {
+      await api.addLabels(n, labels);
+      if (labels.length > 0) writes.push(`added ${names(labels)} to #${n}`);
+    },
+    removeLabel: async (n, label) => {
+      await api.removeLabel(n, label);
+      writes.push(`removed \`${label}\` from #${n}`);
+    },
+    closeIssue: async (n) => {
+      await api.closeIssue(n);
+      writes.push(`closed #${n}`);
+    },
+    createIssue: async (issue) => {
+      const n = await api.createIssue(issue);
+      writes.push(`opened issue #${n}`);
+      return n;
+    },
+    createPull: async (pull) => {
+      const n = await api.createPull(pull);
+      writes.push(`opened ${pull.draft ? "draft " : ""}PR #${n} from \`${pull.head}\``);
+      return n;
+    },
+    mergePull: async (n) => {
+      await api.mergePull(n);
+      writes.push(`merged #${n}`);
+    },
+    addAssignees: async (n, logins) => {
+      await api.addAssignees(n, logins);
+      writes.push(`assigned ${logins.map((l) => `@${l}`).join(", ")} to #${n}`);
+    },
+    requestReviewers: async (n, logins) => {
+      await api.requestReviewers(n, logins);
+      writes.push(`asked ${logins.map((l) => `@${l}`).join(", ")} to review #${n}`);
+    },
+  };
 }
 
 async function applyWrites(io: ApplyIO): Promise<string> {

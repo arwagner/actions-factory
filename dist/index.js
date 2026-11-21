@@ -16404,7 +16404,7 @@ async function runRouter(io) {
     }
     await postRefusal(decision, { io, loaded, reader, writer, trigger });
   }
-  io.summary(summaryFor(decision, loaded, tickReport, checks));
+  io.summary(summaryFor(decision, loaded, tickReport, checks, decision.kind === "run" ? runDetails(decision, loaded, io) : void 0));
   const failed = checks?.filter((c) => !c.ok).length ?? 0;
   if (failed > 0) io.setFailed?.(`the doctor found ${failed} problem${failed === 1 ? "" : "s"}; see the run summary`);
   io.setOutput("decision", JSON.stringify(decision));
@@ -16500,10 +16500,31 @@ async function ensureLabels(reader, writer, config) {
     }
   }
 }
-function summaryFor(decision, loaded, tickReport, checks) {
+function runDetails(decision, loaded, io) {
+  const repoUrl = io.runUrl?.replace(/\/actions\/runs\/.*$/, "");
+  const link = (n) => repoUrl ? `[#${n}](${repoUrl}/issues/${n})` : `#${n}`;
+  const s = decision.subject;
+  const subject = "number" in s ? `${s.kind === "pr" ? "pull request" : "issue"} ${link(s.number)}` : `${s.kind === "batch" ? `batch \`${s.query}\`` : "the repo"}${s.origin ? `, from ${link(s.origin)}` : ""}`;
+  const settings = agentJobSettings(loaded.config, decision.task);
+  const model = loaded.config.tasks[decision.task].model ?? loaded.config.model ?? "the CLI's default";
+  const version = factoryVersion(io.factoryRoot);
+  const factory = io.factorySha ? `v${version} (\`${io.factorySha.slice(0, 7)}\`)` : `v${version}`;
+  const cli = settings.cliVersion === "none" ? "" : ` ${settings.cliVersion}`;
+  return [
+    "| | |",
+    "|---|---|",
+    `| Subject | ${subject} |`,
+    `| Task | \`${decision.task}\`, started by ${decision.label} (@${decision.actor}) |`,
+    `| Template | ${loaded.layers.map((l) => l.name).join(" \u2192 ")} |`,
+    `| Factory | ${factory} |`,
+    `| Agent | ${settings.agent}${cli}, model ${model} |`
+  ].join("\n");
+}
+function summaryFor(decision, loaded, tickReport, checks, details) {
   const failed = checks?.filter((c) => !c.ok).length;
   const title = checks ? `doctor: ${failed ? `${failed} problem${failed === 1 ? "" : "s"}` : "all checks pass"}` : headline(decision);
   const lines = [`### actions-factory: ${title}`, ""];
+  if (details) lines.push(details, "");
   if (checks) lines.push(renderChecks(checks), "", "The agent credentials are checked in the doctor's agent job.", "");
   if (tickReport) lines.push(tickReport.length > 0 ? tickReport.join("\n") : "Nothing is due or waiting.", "");
   for (const warning of decision.warnings) lines.push(`> [!WARNING]`, `> ${warning}`, "");
@@ -16721,20 +16742,80 @@ var Refusal = class extends Error {
 };
 async function applyRun(io) {
   const target = statusTarget(io.subject);
+  const writes = [];
+  const recorded = {
+    ...io,
+    api: recording(io.api, writes),
+    git: {
+      changedFiles: () => io.git.changedFiles(),
+      push: async (branch) => {
+        await io.git.push(branch);
+        writes.push(`pushed \`${branch}\``);
+      }
+    },
+    runHook: async (path, env) => {
+      await io.runHook(path, env);
+      writes.push("ran the `after` hook");
+    }
+  };
   try {
-    const outcome = await applyWrites(io);
+    const outcome = await applyWrites(recorded);
     if (target !== void 0) await upsertStatus(io, target, `\u2705 \`${io.taskName}\`: **${outcome}**`);
-    return { ok: true, outcome };
+    return { ok: true, outcome, writes };
   } catch (error) {
     const reason2 = error instanceof Error ? error.message : String(error);
     if (target !== void 0) {
-      await io.api.addLabels(target, [BLOCKED3]);
-      if (io.assignee) await io.api.addAssignees(target, [io.assignee]);
+      await recorded.api.addLabels(target, [BLOCKED3]);
+      if (io.assignee) await recorded.api.addAssignees(target, [io.assignee]);
       const retry = io.task.label ? ` To retry, add \`${io.task.label}\` again.` : "";
       await upsertStatus(io, target, `\u26D4 \`${io.taskName}\` stopped: ${reason2}${retry}`);
     }
-    return { ok: false, reason: reason2 };
+    return { ok: false, reason: reason2, writes };
   }
+}
+function recording(api, writes) {
+  const names = (list) => list.map((n) => `\`${n}\``).join(", ");
+  return {
+    ...api,
+    comment: async (n, body) => {
+      await api.comment(n, body);
+      writes.push(`commented on #${n}`);
+    },
+    addLabels: async (n, labels) => {
+      await api.addLabels(n, labels);
+      if (labels.length > 0) writes.push(`added ${names(labels)} to #${n}`);
+    },
+    removeLabel: async (n, label) => {
+      await api.removeLabel(n, label);
+      writes.push(`removed \`${label}\` from #${n}`);
+    },
+    closeIssue: async (n) => {
+      await api.closeIssue(n);
+      writes.push(`closed #${n}`);
+    },
+    createIssue: async (issue) => {
+      const n = await api.createIssue(issue);
+      writes.push(`opened issue #${n}`);
+      return n;
+    },
+    createPull: async (pull) => {
+      const n = await api.createPull(pull);
+      writes.push(`opened ${pull.draft ? "draft " : ""}PR #${n} from \`${pull.head}\``);
+      return n;
+    },
+    mergePull: async (n) => {
+      await api.mergePull(n);
+      writes.push(`merged #${n}`);
+    },
+    addAssignees: async (n, logins) => {
+      await api.addAssignees(n, logins);
+      writes.push(`assigned ${logins.map((l) => `@${l}`).join(", ")} to #${n}`);
+    },
+    requestReviewers: async (n, logins) => {
+      await api.requestReviewers(n, logins);
+      writes.push(`asked ${logins.map((l) => `@${l}`).join(", ")} to review #${n}`);
+    }
+  };
 }
 async function applyWrites(io) {
   if (io.agentStatus !== "ok") {
@@ -17066,6 +17147,7 @@ async function runTurn(io, turn) {
     return;
   }
   saveState(io, { ...state, agentStatus: "timed-out", checksPassed: void 0, turnsRun: turn });
+  const started = Date.now();
   const result = await adapter.run({
     checkout: io.checkout,
     promptFile: f.prompt,
@@ -17079,7 +17161,14 @@ async function runTurn(io, turn) {
     turn,
     task: io.task.name
   });
-  saveState(io, { ...state, agentStatus: result.status, checksPassed: void 0, turnsRun: turn, usage: addUsage(state.usage, result.usage) });
+  saveState(io, {
+    ...state,
+    agentStatus: result.status,
+    checksPassed: void 0,
+    turnsRun: turn,
+    usage: addUsage(state.usage, result.usage),
+    agentSeconds: (state.agentSeconds ?? 0) + Math.round((Date.now() - started) / 1e3)
+  });
 }
 async function runChecks(io, turn, checkEnv) {
   const state = loadState(io);
@@ -17088,17 +17177,20 @@ async function runChecks(io, turn, checkEnv) {
   const { commands, warnings } = maskCommands(values);
   for (const line of [...commands, ...warnings]) io.log(line);
   let failure;
+  const results = [];
   for (const command of io.task.checks) {
     io.log(`::group::check: ${command}`);
+    const started = Date.now();
     const { code, output } = await io.runCommand(command, values);
     io.log("::endgroup::");
+    results.push({ command, ok: code === 0, seconds: Math.round((Date.now() - started) / 1e3) });
     if (code !== 0) {
       failure = `${command} exited with ${code}:
 ${scrub(output, values).split("\n").slice(-200).join("\n")}`;
       break;
     }
   }
-  saveState(io, { ...state, checksPassed: failure === void 0, checkFailure: failure });
+  saveState(io, { ...state, checksPassed: failure === void 0, checkFailure: failure, checkResults: results });
 }
 async function handoff(io) {
   const f = files(io.workDir);
@@ -17109,11 +17201,15 @@ async function handoff(io) {
     agentStatus: status,
     checksPassed: state?.checksPassed !== false || !io.task.checksGate,
     batchNumbers: state?.batchNumbers,
-    usage: state?.usage
+    usage: state?.usage,
+    turnsRun: state?.turnsRun,
+    agentSeconds: state?.agentSeconds,
+    checks: state?.checkResults,
+    transcript: io.uploadTranscript && existsSync6(f.transcript)
   };
   writeFileSync3(join6(f.handoff, "meta.json"), JSON.stringify(meta, null, 2));
   if (existsSync6(f.plan)) copyFileSync(f.plan, join6(f.handoff, "plan.json"));
-  if (io.uploadTranscript && existsSync6(f.transcript)) copyFileSync(f.transcript, join6(f.handoff, "transcript.ndjson"));
+  if (meta.transcript) copyFileSync(f.transcript, join6(f.handoff, "transcript.ndjson"));
   const run3 = (...args) => git("git", ["-c", "user.name=actions-factory", "-c", "user.email=actions-factory@users.noreply.github.com", ...args], {
     cwd: io.checkout
   });

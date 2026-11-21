@@ -14847,7 +14847,7 @@ var require__ = __commonJS({
 
 // src/runner/apply-main.ts
 import { spawn } from "node:child_process";
-import { existsSync as existsSync4, readFileSync as readFileSync2 } from "node:fs";
+import { appendFileSync, existsSync as existsSync4, readFileSync as readFileSync2 } from "node:fs";
 import { join as join3 } from "node:path";
 
 // src/config/fetch.ts
@@ -16002,20 +16002,80 @@ var Refusal = class extends Error {
 };
 async function applyRun(io) {
   const target = statusTarget(io.subject);
+  const writes = [];
+  const recorded = {
+    ...io,
+    api: recording(io.api, writes),
+    git: {
+      changedFiles: () => io.git.changedFiles(),
+      push: async (branch) => {
+        await io.git.push(branch);
+        writes.push(`pushed \`${branch}\``);
+      }
+    },
+    runHook: async (path, env) => {
+      await io.runHook(path, env);
+      writes.push("ran the `after` hook");
+    }
+  };
   try {
-    const outcome = await applyWrites(io);
+    const outcome = await applyWrites(recorded);
     if (target !== void 0) await upsertStatus(io, target, `\u2705 \`${io.taskName}\`: **${outcome}**`);
-    return { ok: true, outcome };
+    return { ok: true, outcome, writes };
   } catch (error) {
     const reason2 = error instanceof Error ? error.message : String(error);
     if (target !== void 0) {
-      await io.api.addLabels(target, [BLOCKED]);
-      if (io.assignee) await io.api.addAssignees(target, [io.assignee]);
+      await recorded.api.addLabels(target, [BLOCKED]);
+      if (io.assignee) await recorded.api.addAssignees(target, [io.assignee]);
       const retry = io.task.label ? ` To retry, add \`${io.task.label}\` again.` : "";
       await upsertStatus(io, target, `\u26D4 \`${io.taskName}\` stopped: ${reason2}${retry}`);
     }
-    return { ok: false, reason: reason2 };
+    return { ok: false, reason: reason2, writes };
   }
+}
+function recording(api, writes) {
+  const names = (list) => list.map((n) => `\`${n}\``).join(", ");
+  return {
+    ...api,
+    comment: async (n, body) => {
+      await api.comment(n, body);
+      writes.push(`commented on #${n}`);
+    },
+    addLabels: async (n, labels) => {
+      await api.addLabels(n, labels);
+      if (labels.length > 0) writes.push(`added ${names(labels)} to #${n}`);
+    },
+    removeLabel: async (n, label) => {
+      await api.removeLabel(n, label);
+      writes.push(`removed \`${label}\` from #${n}`);
+    },
+    closeIssue: async (n) => {
+      await api.closeIssue(n);
+      writes.push(`closed #${n}`);
+    },
+    createIssue: async (issue) => {
+      const n = await api.createIssue(issue);
+      writes.push(`opened issue #${n}`);
+      return n;
+    },
+    createPull: async (pull) => {
+      const n = await api.createPull(pull);
+      writes.push(`opened ${pull.draft ? "draft " : ""}PR #${n} from \`${pull.head}\``);
+      return n;
+    },
+    mergePull: async (n) => {
+      await api.mergePull(n);
+      writes.push(`merged #${n}`);
+    },
+    addAssignees: async (n, logins) => {
+      await api.addAssignees(n, logins);
+      writes.push(`assigned ${logins.map((l) => `@${l}`).join(", ")} to #${n}`);
+    },
+    requestReviewers: async (n, logins) => {
+      await api.requestReviewers(n, logins);
+      writes.push(`asked ${logins.map((l) => `@${l}`).join(", ")} to review #${n}`);
+    }
+  };
 }
 async function applyWrites(io) {
   if (io.agentStatus !== "ok") {
@@ -16165,6 +16225,46 @@ function bundledWork({ checkout, bundle, remote, token }) {
   };
 }
 
+// src/runner/summary.ts
+function renderApplySummary(input) {
+  const { taskName, result, meta, runUrl } = input;
+  const lines = [
+    result.ok ? `### actions-factory: \`${taskName}\` \u2192 **${result.outcome}**` : `### actions-factory: \`${taskName}\` stopped`,
+    ""
+  ];
+  if (!result.ok) lines.push(result.reason, "");
+  const rounds = meta.turnsRun ?? 0;
+  const agent = [meta.agentStatus, `${rounds} round${rounds === 1 ? "" : "s"}`, ...meta.agentSeconds === void 0 ? [] : [duration(meta.agentSeconds)]];
+  const checks = meta.checks === void 0 ? "didn't run" : meta.checks.length === 0 ? "none configured" : meta.checks.map((c) => `${c.ok ? "\u2705" : "\u274C"} \`${c.command}\` ${duration(c.seconds)}`).join("<br>");
+  const transcript = meta.transcript ? `\`transcript.ndjson\` in the [factory-handoff artifact](${runUrl}#artifacts)` : "not kept (public repos keep none, \xA79)";
+  lines.push(
+    "| | |",
+    "|---|---|",
+    `| Agent | ${agent.join(" \xB7 ")} |`,
+    `| Checks${rounds > 1 ? " (last round)" : ""} | ${checks} |`,
+    `| Tokens | ${usage(meta.usage)} |`,
+    `| Transcript | ${transcript} |`,
+    "",
+    "**Writes**",
+    "",
+    ...result.writes.length > 0 ? result.writes.map((w) => `- ${w}`) : ["None."],
+    ""
+  );
+  return lines.join("\n");
+}
+function duration(seconds) {
+  const m = Math.floor(seconds / 60);
+  return m > 0 ? `${m}m ${seconds % 60}s` : `${seconds}s`;
+}
+function usage(u) {
+  if (!u || u.inputTokens === void 0 && u.outputTokens === void 0 && u.costUsd === void 0) return "not reported";
+  const parts = [];
+  if (u.inputTokens !== void 0) parts.push(`${u.inputTokens.toLocaleString("en-US")} in`);
+  if (u.outputTokens !== void 0) parts.push(`${u.outputTokens.toLocaleString("en-US")} out`);
+  if (u.costUsd !== void 0) parts.push(`$${u.costUsd.toFixed(2)}`);
+  return parts.join(" \xB7 ");
+}
+
 // src/runner/apply-main.ts
 async function main() {
   const env = (name) => process.env[name] || void 0;
@@ -16189,6 +16289,7 @@ async function main() {
   const readJson = (path) => existsSync4(path) ? JSON.parse(readFileSync2(path, "utf8")) : void 0;
   const meta = readJson(join3(handoff, "meta.json")) ?? { agentStatus: "failed", checksPassed: false };
   const server = env("GITHUB_SERVER_URL") ?? "https://github.com";
+  const runUrl = `${server}/${owner}/${repo}/actions/runs/${required("GITHUB_RUN_ID")}`;
   const result = await applyRun({
     taskName: decision.task,
     task,
@@ -16201,13 +16302,15 @@ async function main() {
     git: bundledWork({ checkout, bundle: join3(handoff, "work.bundle"), remote: `${server}/${owner}/${repo}`, token }),
     api: gitHubApi(token, owner, repo, env("GITHUB_API_URL")),
     runId: required("GITHUB_RUN_ID"),
-    runUrl: `${server}/${owner}/${repo}/actions/runs/${required("GITHUB_RUN_ID")}`,
+    runUrl,
     assignee: loaded.config.assignee,
     prsGetFactoryReview: Object.values(loaded.config.tasks).some(
       (t) => t.subject === "pr" && t.label !== void 0 && !t.writes.merge
     ),
     runHook: (path, hookEnv) => runHook(path, { ...hookEnv, FACTORY_TOKEN: token, GH_TOKEN: token }, checkout)
   });
+  appendFileSync(required("GITHUB_STEP_SUMMARY"), `${renderApplySummary({ taskName: decision.task, result, meta, runUrl })}
+`);
   if (!result.ok) {
     console.log(`::error title=actions-factory::${escape2(result.reason)}`);
     process.exitCode = 1;

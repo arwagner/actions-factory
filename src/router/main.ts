@@ -21,6 +21,7 @@ async function main(): Promise<void> {
     factoryRoot: required("FACTORY_ROOT"),
     cacheDir: join(temp, "factory-templates"),
     stubVersion: env("STUB_VERSION"),
+    factorySha: env("FACTORY_SHA"),
     factoryToken: env("FACTORY_TOKEN"),
     githubToken: required("GITHUB_TOKEN"),
     api: (token) => gitHubApi(token, owner, repo, env("GITHUB_API_URL")),

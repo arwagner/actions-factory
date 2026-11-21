@@ -16292,7 +16292,7 @@ async function runRouter(io) {
     }
     await postRefusal(decision, { io, loaded, reader, writer, trigger });
   }
-  io.summary(summaryFor(decision, loaded, tickReport, checks));
+  io.summary(summaryFor(decision, loaded, tickReport, checks, decision.kind === "run" ? runDetails(decision, loaded, io) : void 0));
   const failed = checks?.filter((c) => !c.ok).length ?? 0;
   if (failed > 0) io.setFailed?.(`the doctor found ${failed} problem${failed === 1 ? "" : "s"}; see the run summary`);
   io.setOutput("decision", JSON.stringify(decision));
@@ -16388,10 +16388,31 @@ async function ensureLabels(reader, writer, config) {
     }
   }
 }
-function summaryFor(decision, loaded, tickReport, checks) {
+function runDetails(decision, loaded, io) {
+  const repoUrl = io.runUrl?.replace(/\/actions\/runs\/.*$/, "");
+  const link = (n) => repoUrl ? `[#${n}](${repoUrl}/issues/${n})` : `#${n}`;
+  const s = decision.subject;
+  const subject = "number" in s ? `${s.kind === "pr" ? "pull request" : "issue"} ${link(s.number)}` : `${s.kind === "batch" ? `batch \`${s.query}\`` : "the repo"}${s.origin ? `, from ${link(s.origin)}` : ""}`;
+  const settings = agentJobSettings(loaded.config, decision.task);
+  const model = loaded.config.tasks[decision.task].model ?? loaded.config.model ?? "the CLI's default";
+  const version = factoryVersion(io.factoryRoot);
+  const factory = io.factorySha ? `v${version} (\`${io.factorySha.slice(0, 7)}\`)` : `v${version}`;
+  const cli = settings.cliVersion === "none" ? "" : ` ${settings.cliVersion}`;
+  return [
+    "| | |",
+    "|---|---|",
+    `| Subject | ${subject} |`,
+    `| Task | \`${decision.task}\`, started by ${decision.label} (@${decision.actor}) |`,
+    `| Template | ${loaded.layers.map((l) => l.name).join(" \u2192 ")} |`,
+    `| Factory | ${factory} |`,
+    `| Agent | ${settings.agent}${cli}, model ${model} |`
+  ].join("\n");
+}
+function summaryFor(decision, loaded, tickReport, checks, details) {
   const failed = checks?.filter((c) => !c.ok).length;
   const title = checks ? `doctor: ${failed ? `${failed} problem${failed === 1 ? "" : "s"}` : "all checks pass"}` : headline(decision);
   const lines = [`### actions-factory: ${title}`, ""];
+  if (details) lines.push(details, "");
   if (checks) lines.push(renderChecks(checks), "", "The agent credentials are checked in the doctor's agent job.", "");
   if (tickReport) lines.push(tickReport.length > 0 ? tickReport.join("\n") : "Nothing is due or waiting.", "");
   for (const warning of decision.warnings) lines.push(`> [!WARNING]`, `> ${warning}`, "");
@@ -16461,6 +16482,7 @@ async function main() {
     factoryRoot: required("FACTORY_ROOT"),
     cacheDir: join4(temp, "factory-templates"),
     stubVersion: env("STUB_VERSION"),
+    factorySha: env("FACTORY_SHA"),
     factoryToken: env("FACTORY_TOKEN"),
     githubToken: required("GITHUB_TOKEN"),
     api: (token) => gitHubApi(token, owner, repo, env("GITHUB_API_URL")),

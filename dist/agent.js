@@ -16221,6 +16221,7 @@ async function runTurn(io, turn) {
     return;
   }
   saveState(io, { ...state, agentStatus: "timed-out", checksPassed: void 0, turnsRun: turn });
+  const started = Date.now();
   const result = await adapter.run({
     checkout: io.checkout,
     promptFile: f.prompt,
@@ -16234,7 +16235,14 @@ async function runTurn(io, turn) {
     turn,
     task: io.task.name
   });
-  saveState(io, { ...state, agentStatus: result.status, checksPassed: void 0, turnsRun: turn, usage: addUsage(state.usage, result.usage) });
+  saveState(io, {
+    ...state,
+    agentStatus: result.status,
+    checksPassed: void 0,
+    turnsRun: turn,
+    usage: addUsage(state.usage, result.usage),
+    agentSeconds: (state.agentSeconds ?? 0) + Math.round((Date.now() - started) / 1e3)
+  });
 }
 async function runChecks(io, turn, checkEnv) {
   const state = loadState(io);
@@ -16243,17 +16251,20 @@ async function runChecks(io, turn, checkEnv) {
   const { commands, warnings } = maskCommands(values);
   for (const line of [...commands, ...warnings]) io.log(line);
   let failure;
+  const results = [];
   for (const command of io.task.checks) {
     io.log(`::group::check: ${command}`);
+    const started = Date.now();
     const { code, output } = await io.runCommand(command, values);
     io.log("::endgroup::");
+    results.push({ command, ok: code === 0, seconds: Math.round((Date.now() - started) / 1e3) });
     if (code !== 0) {
       failure = `${command} exited with ${code}:
 ${scrub(output, values).split("\n").slice(-200).join("\n")}`;
       break;
     }
   }
-  saveState(io, { ...state, checksPassed: failure === void 0, checkFailure: failure });
+  saveState(io, { ...state, checksPassed: failure === void 0, checkFailure: failure, checkResults: results });
 }
 async function handoff(io) {
   const f = files(io.workDir);
@@ -16264,11 +16275,15 @@ async function handoff(io) {
     agentStatus: status,
     checksPassed: state?.checksPassed !== false || !io.task.checksGate,
     batchNumbers: state?.batchNumbers,
-    usage: state?.usage
+    usage: state?.usage,
+    turnsRun: state?.turnsRun,
+    agentSeconds: state?.agentSeconds,
+    checks: state?.checkResults,
+    transcript: io.uploadTranscript && existsSync5(f.transcript)
   };
   writeFileSync3(join5(f.handoff, "meta.json"), JSON.stringify(meta, null, 2));
   if (existsSync5(f.plan)) copyFileSync(f.plan, join5(f.handoff, "plan.json"));
-  if (io.uploadTranscript && existsSync5(f.transcript)) copyFileSync(f.transcript, join5(f.handoff, "transcript.ndjson"));
+  if (meta.transcript) copyFileSync(f.transcript, join5(f.handoff, "transcript.ndjson"));
   const run3 = (...args) => git("git", ["-c", "user.name=actions-factory", "-c", "user.email=actions-factory@users.noreply.github.com", ...args], {
     cwd: io.checkout
   });

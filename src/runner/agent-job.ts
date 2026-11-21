@@ -59,6 +59,8 @@ interface State {
   agentStatus: HandoffMeta["agentStatus"] | "not-run";
   checksPassed?: boolean;
   checkFailure?: string;
+  checkResults?: HandoffMeta["checks"];
+  agentSeconds?: number;
   turnsRun: number;
   usage?: HandoffMeta["usage"];
 }
@@ -111,6 +113,7 @@ export async function runTurn(io: AgentJobIO, turn: number): Promise<void> {
   }
   // If the step's own timeout kills this round, the state already says so.
   saveState(io, { ...state, agentStatus: "timed-out", checksPassed: undefined, turnsRun: turn });
+  const started = Date.now();
   const result = await adapter.run({
     checkout: io.checkout,
     promptFile: f.prompt,
@@ -124,7 +127,14 @@ export async function runTurn(io: AgentJobIO, turn: number): Promise<void> {
     turn,
     task: io.task.name,
   });
-  saveState(io, { ...state, agentStatus: result.status, checksPassed: undefined, turnsRun: turn, usage: addUsage(state.usage, result.usage) });
+  saveState(io, {
+    ...state,
+    agentStatus: result.status,
+    checksPassed: undefined,
+    turnsRun: turn,
+    usage: addUsage(state.usage, result.usage),
+    agentSeconds: (state.agentSeconds ?? 0) + Math.round((Date.now() - started) / 1000),
+  });
 }
 
 /**
@@ -138,16 +148,19 @@ export async function runChecks(io: AgentJobIO, turn: number, checkEnv: string |
   const { commands, warnings } = maskCommands(values);
   for (const line of [...commands, ...warnings]) io.log(line);
   let failure: string | undefined;
+  const results: NonNullable<HandoffMeta["checks"]> = [];
   for (const command of io.task.checks) {
     io.log(`::group::check: ${command}`);
+    const started = Date.now();
     const { code, output } = await io.runCommand(command, values);
     io.log("::endgroup::");
+    results.push({ command, ok: code === 0, seconds: Math.round((Date.now() - started) / 1000) });
     if (code !== 0) {
       failure = `${command} exited with ${code}:\n${scrub(output, values).split("\n").slice(-200).join("\n")}`;
       break;
     }
   }
-  saveState(io, { ...state, checksPassed: failure === undefined, checkFailure: failure });
+  saveState(io, { ...state, checksPassed: failure === undefined, checkFailure: failure, checkResults: results });
 }
 
 /** Commits the agent's work to `factory-work`, bundles it, and writes the artifact the apply job reads. */
@@ -161,10 +174,14 @@ export async function handoff(io: AgentJobIO): Promise<void> {
     checksPassed: state?.checksPassed !== false || !io.task.checksGate,
     batchNumbers: state?.batchNumbers,
     usage: state?.usage,
+    turnsRun: state?.turnsRun,
+    agentSeconds: state?.agentSeconds,
+    checks: state?.checkResults,
+    transcript: io.uploadTranscript && existsSync(f.transcript),
   };
   writeFileSync(join(f.handoff, "meta.json"), JSON.stringify(meta, null, 2));
   if (existsSync(f.plan)) copyFileSync(f.plan, join(f.handoff, "plan.json"));
-  if (io.uploadTranscript && existsSync(f.transcript)) copyFileSync(f.transcript, join(f.handoff, "transcript.ndjson"));
+  if (meta.transcript) copyFileSync(f.transcript, join(f.handoff, "transcript.ndjson"));
 
   const run = (...args: string[]) =>
     git("git", ["-c", "user.name=actions-factory", "-c", "user.email=actions-factory@users.noreply.github.com", ...args], {

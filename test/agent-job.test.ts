@@ -74,7 +74,15 @@ describe("the agent job", () => {
 
     expect(prompt(io)).toContain("Add a widget");
     expect(hookEnvs).toEqual([{ FACTORY_TASK: "implement", FACTORY_WORK_DIR: io.workDir }]);
-    expect(meta(io)).toEqual({ agentStatus: "ok", checksPassed: true, usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 } });
+    expect(meta(io)).toEqual({
+      agentStatus: "ok",
+      checksPassed: true,
+      usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 },
+      turnsRun: 1,
+      agentSeconds: expect.any(Number),
+      checks: [],
+      transcript: true,
+    });
     expect(JSON.parse(readFileSync(join(io.workDir, "handoff/plan.json"), "utf8"))).toEqual({ outcome: "done" });
     const bundle = join(io.workDir, "handoff/work.bundle");
     expect(git(io.checkout, "bundle", "list-heads", bundle)).toContain("refs/heads/factory-work");
@@ -108,7 +116,12 @@ describe("the agent job", () => {
 
     expect(prompt(io)).toContain("not fixed yet");
     expect(JSON.parse(readFileSync(join(io.workDir, "transcript.ndjson"), "utf8")).turn).toBe(2);
-    expect(meta(io)).toMatchObject({ agentStatus: "ok", checksPassed: true });
+    expect(meta(io)).toMatchObject({
+      agentStatus: "ok",
+      checksPassed: true,
+      turnsRun: 2,
+      checks: [{ command: expect.stringContaining("grep -q yes"), ok: true, seconds: expect.any(Number) }],
+    });
   });
 
   it("masks check secrets before running checks, gives them to the check only, and scrubs kept output", async () => {

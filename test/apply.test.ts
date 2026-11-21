@@ -51,7 +51,11 @@ describe("applyRun", () => {
   it("pushes to a factory branch, opens the PR, comments, applies the outcome and reports it", async () => {
     const result = await applyRun(io());
 
-    expect(result).toEqual({ ok: true, outcome: "done" });
+    expect(result).toEqual({
+      ok: true,
+      outcome: "done",
+      writes: ["pushed `agent/issue-42-9001`", "opened draft PR #77 from `agent/issue-42-9001`", "commented on #42", "added `agent:review` to #42"],
+    });
     expect(pushed).toEqual(["agent/issue-42-9001"]);
     expect(gh.calls("createPull")[0].args).toEqual({
       title: "Add widget",
@@ -154,6 +158,7 @@ describe("applyRun", () => {
       expect(await applyRun(io({ task: merge, subject: pr, git: noChanges, plan: { outcome: "done", merge: true } }))).toEqual({
         ok: true,
         outcome: "done",
+        writes: ["added `agent:review` to #7", "merged #7"],
       });
       expect(gh.calls("mergePull")).toHaveLength(1);
 
@@ -161,6 +166,10 @@ describe("applyRun", () => {
       gh.pulls[7] = { head: "agent/x", mergeable: false };
       expect((await applyRun(io({ task: merge, subject: pr, git: noChanges, plan: { outcome: "done", merge: true } }))).ok).toBe(false);
       expect(gh.calls("addLabels").map((w) => w.args)).toContainEqual({ number: 7, names: ["agent:blocked"] });
+      expect((await applyRun(io({ task: merge, subject: pr, git: noChanges, plan: { outcome: "done", merge: true } }))).writes).toEqual([
+        "added `agent:review` to #7",
+        "added `agent:blocked` to #7",
+      ]);
     });
   });
 
