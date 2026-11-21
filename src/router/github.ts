@@ -16,7 +16,11 @@ export interface GitHubApi {
   comment(issueNumber: number, body: string): Promise<void>;
   addLabels(issueNumber: number, names: string[]): Promise<void>;
   listComments(issueNumber: number): Promise<Array<{ id: number; body: string; author: string }>>;
-  getIssue(issueNumber: number): Promise<{ title: string; body: string; isPullRequest: boolean }>;
+  getIssue(issueNumber: number): Promise<{ title: string; body: string; isPullRequest: boolean; open: boolean; labels: string[] }>;
+  /** Open issues and PRs carrying `label`, oldest first. */
+  listOpenLabeled(label: string): Promise<Array<{ number: number; labels: string[] }>>;
+  /** Who last added `label` to the item, from its events; undefined if no event says. */
+  labeler(issueNumber: number, label: string): Promise<string | undefined>;
   /** Open issues matching a search query in this repo, oldest first. */
   searchIssues(query: string): Promise<Array<{ number: number; title: string; body: string }>>;
   updateComment(commentId: number, body: string): Promise<void>;
@@ -27,12 +31,16 @@ export interface GitHubApi {
    * Head branch name; whether GitHub can merge it now (mergeable, checks green); and whether that may still
    * change (mergeability being computed, or check runs on the head not finished).
    */
-  getPull(number: number): Promise<{ head: string; mergeable: boolean; pending: boolean }>;
+  getPull(number: number): Promise<{ head: string; mergeable: boolean; pending: boolean; headRepo: string | null; baseRepo: string }>;
   createPull(pull: { title: string; body: string; head: string; base: string; draft: boolean }): Promise<number>;
   /** Merges with a merge commit. Throws if GitHub refuses. */
   mergePull(number: number): Promise<void>;
   /** Workflow runs created at or after `since` (ISO time), newest first. */
-  listRunsSince(since: string): Promise<Array<{ id: number; title: string; conclusion: string | null }>>;
+  listRunsSince(since: string): Promise<Array<{ id: number; title: string; status: string; conclusion: string | null }>>;
+  /** The stub's recent schedule ticks (runs titled `factory · tick`), newest first. */
+  listTicks(): Promise<Array<{ id: number; createdAt: string; conclusion: string | null }>>;
+  /** Sends a `repository_dispatch`. Needs `FACTORY_TOKEN`: one sent with the default token starts no workflow. */
+  dispatch(eventType: string, payload: Record<string, unknown>): Promise<void>;
   addAssignees(issueNumber: number, logins: string[]): Promise<void>;
   removeAssignees(issueNumber: number, logins: string[]): Promise<void>;
   requestReviewers(pullNumber: number, logins: string[]): Promise<void>;
@@ -100,8 +108,45 @@ export function gitHubApi(token: string, owner: string, repo: string, baseUrl = 
       }
     },
     async getIssue(issueNumber) {
-      const issue = (await call("GET", `/issues/${issueNumber}`)) as { title: string; body: string | null; pull_request?: unknown };
-      return { title: issue.title, body: issue.body ?? "", isPullRequest: issue.pull_request !== undefined };
+      const issue = (await call("GET", `/issues/${issueNumber}`)) as {
+        title: string;
+        body: string | null;
+        pull_request?: unknown;
+        state: string;
+        labels: Array<{ name: string }>;
+      };
+      return {
+        title: issue.title,
+        body: issue.body ?? "",
+        isPullRequest: issue.pull_request !== undefined,
+        open: issue.state === "open",
+        labels: issue.labels.map((l) => l.name),
+      };
+    },
+    async listOpenLabeled(label) {
+      const items: Array<{ number: number; labels: string[] }> = [];
+      for (let page = 1; page <= 10; page++) {
+        const batch = (await call("GET", `/issues?state=open&labels=${enc(label)}&sort=created&direction=asc&per_page=100&page=${page}`)) as Array<{
+          number: number;
+          labels: Array<{ name: string }>;
+        }>;
+        items.push(...batch.map((i) => ({ number: i.number, labels: i.labels.map((l) => l.name) })));
+        if (batch.length < 100) break;
+      }
+      return items;
+    },
+    async labeler(issueNumber, label) {
+      let actor: string | undefined;
+      for (let page = 1; page <= 10; page++) {
+        const batch = (await call("GET", `/issues/${issueNumber}/events?per_page=100&page=${page}`)) as Array<{
+          event: string;
+          label?: { name: string };
+          actor: { login: string } | null;
+        }>;
+        for (const e of batch) if (e.event === "labeled" && e.label?.name === label) actor = e.actor?.login;
+        if (batch.length < 100) break;
+      }
+      return actor;
     },
     async searchIssues(query) {
       const q = encodeURIComponent(`repo:${owner}/${repo} is:issue is:open ${query}`);
@@ -124,7 +169,8 @@ export function gitHubApi(token: string, owner: string, repo: string, baseUrl = 
     },
     async getPull(number) {
       const pull = (await call("GET", `/pulls/${number}`)) as {
-        head: { ref: string; sha: string };
+        head: { ref: string; sha: string; repo: { full_name: string } | null };
+        base: { repo: { full_name: string } };
         mergeable: boolean | null;
         mergeable_state: string;
       };
@@ -132,6 +178,8 @@ export function gitHubApi(token: string, owner: string, repo: string, baseUrl = 
       const running = checks.check_runs.some((c) => c.status !== "completed");
       return {
         head: pull.head.ref,
+        headRepo: pull.head.repo?.full_name ?? null,
+        baseRepo: pull.base.repo.full_name,
         mergeable: pull.mergeable === true && pull.mergeable_state === "clean",
         pending: pull.mergeable === null || pull.mergeable_state === "unknown" || running,
       };
@@ -143,15 +191,26 @@ export function gitHubApi(token: string, owner: string, repo: string, baseUrl = 
       await call("PUT", `/pulls/${number}/merge`, { merge_method: "merge" });
     },
     async listRunsSince(since) {
-      const runs: Array<{ id: number; title: string; conclusion: string | null }> = [];
+      const runs: Array<{ id: number; title: string; status: string; conclusion: string | null }> = [];
       for (let page = 1; page <= 10; page++) {
         const batch = (await call("GET", `/actions/runs?per_page=100&page=${page}&created=${enc(`>=${since}`)}`)) as {
-          workflow_runs: Array<{ id: number; display_title: string; conclusion: string | null }>;
+          workflow_runs: Array<{ id: number; display_title: string; status: string; conclusion: string | null }>;
         };
-        runs.push(...batch.workflow_runs.map((r) => ({ id: r.id, title: r.display_title, conclusion: r.conclusion })));
+        runs.push(...batch.workflow_runs.map((r) => ({ id: r.id, title: r.display_title, status: r.status, conclusion: r.conclusion })));
         if (batch.workflow_runs.length < 100) break;
       }
       return runs;
+    },
+    async listTicks() {
+      const batch = (await call("GET", "/actions/runs?event=schedule&per_page=100")) as {
+        workflow_runs: Array<{ id: number; display_title: string; created_at: string; conclusion: string | null }>;
+      };
+      return batch.workflow_runs
+        .filter((r) => r.display_title === "factory · tick")
+        .map((r) => ({ id: r.id, createdAt: r.created_at, conclusion: r.conclusion }));
+    },
+    async dispatch(eventType, payload) {
+      await call("POST", "/dispatches", { event_type: eventType, client_payload: payload });
     },
     async addAssignees(issueNumber, logins) {
       await call("POST", `/issues/${issueNumber}/assignees`, { assignees: logins });

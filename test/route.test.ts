@@ -11,6 +11,7 @@ const config = {
       implement: task("agent:implement", "issue"),
       review: task("agent:review", "pr"),
       nightly: { subject: "repo", prompt: "p.md", outcomes: { done: {} }, schedule: { cron: "0 3 * * *" } },
+      ratchet: { ...task("agent:ratchet", "issue"), schedule: { cron: "0 4 * * *", subject: 12 } },
     },
   },
 };
@@ -153,7 +154,38 @@ describe("route", () => {
       expect(refused).not.toHaveProperty("subject");
     });
 
-    it("ignores repository_dispatch, which is reserved, and label events other than labeled", () => {
+    describe("a scheduled run, dispatched by the tick", () => {
+      const scheduled = (taskName: string) => ({
+        name: "repository_dispatch",
+        payload: { action: "factory-run", client_payload: { task: taskName, trigger: `schedule:${taskName}` }, sender: { login: "bot" } },
+      });
+
+      it("runs the task on the repo, or on the item its schedule names", () => {
+        expect(decide(scheduled("nightly"))).toEqual({
+          kind: "run",
+          task: "nightly",
+          label: "schedule:nightly",
+          subject: { kind: "repo", origin: undefined },
+          actor: "bot",
+          warnings: [],
+        });
+        expect(decide(scheduled("ratchet"))).toMatchObject({ kind: "run", subject: { kind: "issue", number: 12 } });
+      });
+
+      it("refuses on the schedule's item when something blocks every run", () => {
+        expect(decide(scheduled("ratchet"), { context: { ...context, hasFactoryToken: false } })).toMatchObject({
+          kind: "refuse",
+          code: "missing-token",
+          subject: { kind: "issue", number: 12 },
+        });
+      });
+
+      it("ignores a task that isn't scheduled", () => {
+        expect(decide(scheduled("implement"))).toMatchObject({ kind: "ignore", reason: "no scheduled task is named implement" });
+      });
+    });
+
+    it("ignores other repository_dispatch types, which are reserved, and label events other than labeled", () => {
       expect(decide({ name: "repository_dispatch", payload: { action: "build" } })).toMatchObject({ kind: "ignore" });
       const unlabeled = issueLabeled("agent:implement");
       unlabeled.payload.action = "unlabeled";

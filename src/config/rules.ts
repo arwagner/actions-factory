@@ -1,10 +1,11 @@
+import { parseCron } from "../router/cron.js";
 import type { ConfigError } from "./validate.js";
 
 interface Task {
   label?: string;
   subject: string;
   query?: string;
-  schedule?: { cron: string };
+  schedule?: { cron: string; subject?: number };
   writes: { merge: boolean; labels: string[] };
   outcomes: Record<string, { addLabels: string[] }>;
 }
@@ -31,6 +32,16 @@ export function checkHardRules(config: SchemaValidConfig): ConfigError[] {
     const at = (field: string) => `tasks.${name}.${field}`;
     if (!task.label && !task.schedule) {
       errors.push({ path: `tasks.${name}`, message: "needs a label or a schedule to ever run" });
+    }
+    if (task.schedule) {
+      try {
+        parseCron(task.schedule.cron);
+      } catch (error) {
+        errors.push({ path: at("schedule.cron"), message: (error as Error).message });
+      }
+      if ((task.subject === "issue" || task.subject === "pr") && task.schedule.subject === undefined) {
+        errors.push({ path: at("schedule.subject"), message: `a scheduled ${task.subject} task needs the number of the ${task.subject === "pr" ? "pull request" : "issue"} it's about` });
+      }
     }
     if (task.query !== undefined && task.subject !== "batch") {
       errors.push({ path: at("query"), message: "allowed only with subject: batch" });

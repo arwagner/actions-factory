@@ -194,7 +194,9 @@
               "description": "Five-field cron, in `timezone`."
             },
             "subject": {
-              "$ref": "#/$defs/subject"
+              "type": "integer",
+              "minimum": 1,
+              "description": "The issue or PR a scheduled run is about, and where its refusals and failures go."
             }
           }
         },

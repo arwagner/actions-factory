@@ -101,7 +101,7 @@ describe("validateConfig", () => {
 
   describe("hard rules", () => {
     it("allows merge only on a task a person starts with its label", () => {
-      const scheduled = { ...reviewTask, schedule: { cron: "0 3 * * *" }, writes: { merge: true } };
+      const scheduled = { ...reviewTask, schedule: { cron: "0 3 * * *", subject: 7 }, writes: { merge: true } };
       const { label: _omit, ...scheduleOnly } = scheduled;
       const result = validateConfig({
         schemaVersion: 1,
@@ -144,6 +144,21 @@ describe("validateConfig", () => {
 
       expect(result.errors).toEqual([
         { path: "tasks.review.label", message: "invalid: Trigger label. Must start with `agent:`. Omit for a schedule-only task." },
+      ]);
+    });
+
+    it("requires a cron GitHub can read, and the item a scheduled issue or PR task is about", () => {
+      const result = validateConfig({
+        schemaVersion: 1,
+        tasks: {
+          review: { ...reviewTask, schedule: { cron: "0 25 * * *" } },
+          sweep: { ...reviewTask, subject: "repo", schedule: { cron: "0 3 * * MON" } },
+        },
+      });
+
+      expect(result.errors).toEqual([
+        { path: "tasks.review.schedule.cron", message: "25 isn't a valid hour" },
+        { path: "tasks.review.schedule.subject", message: "a scheduled pr task needs the number of the pull request it's about" },
       ]);
     });
 

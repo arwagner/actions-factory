@@ -32,6 +32,7 @@ interface TaskConfig {
   label?: string;
   subject: string;
   query?: string;
+  schedule?: { cron: string; subject?: number };
 }
 
 export interface RouteInput {
@@ -65,6 +66,8 @@ export function route(input: RouteInput): Decision {
       const blocked = blockingRefusal(input);
       return blocked ? { kind: "refuse", ...blocked, warnings } : { kind: "sweep", warnings };
     }
+    case "repository_dispatch":
+      return routeScheduled(input, warnings);
     default:
       return { kind: "ignore", reason: `${input.event.name} events start nothing`, warnings };
   }
@@ -100,6 +103,29 @@ function routeLabel(input: RouteInput, warnings: string[]): Decision {
     return refuse("wrong-subject", message, item);
   }
   return { kind: "run", task: name, label, subject, actor: payload.sender.login, warnings };
+}
+
+/**
+ * A `factory-run` dispatch the tick sent for a scheduled task. (The tick's sweep dispatches name a trigger label;
+ * the router turns those into the label event they stand for before routing.) Other dispatch types are reserved.
+ */
+function routeScheduled(input: RouteInput, warnings: string[]): Decision {
+  const payload = input.event.payload as { action?: string; client_payload?: { task?: string }; sender?: { login: string } };
+  if (payload.action !== "factory-run") return { kind: "ignore", reason: `repository_dispatch ${payload.action} starts nothing`, warnings };
+  const name = String(payload.client_payload?.task ?? "");
+  const tasks = (input.config.config.tasks ?? {}) as Record<string, TaskConfig>;
+  const task = input.config.ok ? tasks[name] : undefined;
+  const origin = task?.schedule?.subject;
+  const blocked = blockingRefusal(input);
+  if (blocked) return { kind: "refuse", ...blocked, subject: origin ? { kind: "issue", number: origin } : undefined, warnings };
+  if (!task?.schedule) return { kind: "ignore", reason: `no scheduled task is named ${name || "(none)"}`, warnings };
+  const subject: Subject =
+    task.subject === "issue" || task.subject === "pr"
+      ? { kind: task.subject, number: origin! }
+      : task.subject === "batch"
+        ? { kind: "batch", query: task.query ?? "", origin }
+        : { kind: "repo", origin };
+  return { kind: "run", task: name, label: `schedule:${name}`, subject, actor: payload.sender?.login ?? "", warnings };
 }
 
 /** The refusals that stop any work, in the order they're checked: token, stub, then config. */

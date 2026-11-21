@@ -7,6 +7,7 @@ import type { GitHubApi, Label } from "./github.js";
 import { type Decision, route } from "./route.js";
 import { CLI_VERSIONS } from "../agents/versions.js";
 import { countRuns, LOOP_BRAKE, startOfDay } from "./limits.js";
+import { RUN_DISPATCH, tick } from "./tick.js";
 import { MIN_STUB_VERSION } from "./version.js";
 
 /** Everything the route job reads and every side effect it has. */
@@ -43,8 +44,16 @@ export async function runRouter(io: RouterIO): Promise<Decision> {
   const reader = io.api(io.githubToken);
   const writer = io.factoryToken ? io.api(io.factoryToken) : undefined;
 
+  const event = await resolveSweptItem({ name: io.eventName, payload: io.payload }, reader);
+  if ("ignore" in event) {
+    const decision: Decision = { kind: "ignore", reason: event.ignore, warnings: [] };
+    io.summary(summaryFor(decision, loaded));
+    io.setOutput("decision", JSON.stringify(decision));
+    return decision;
+  }
+
   let decision = route({
-    event: { name: io.eventName, payload: io.payload },
+    event,
     config: loaded,
     context: {
       hasFactoryToken: writer !== undefined,
@@ -81,7 +90,12 @@ export async function runRouter(io: RouterIO): Promise<Decision> {
     }
   }
 
-  const trigger = (io.payload.label as { name?: string } | undefined)?.name;
+  let tickReport: string[] | undefined;
+  if (decision.kind === "sweep" && writer) {
+    tickReport = await tick({ config: loaded.config as never, reader, writer, now: io.now ?? new Date(), runId: io.runId });
+  }
+
+  const trigger = (event.payload.label as { name?: string } | undefined)?.name;
   const assignee = loaded.ok ? (loaded.config.assignee as string | undefined) : undefined;
   if (decision.kind === "run" && "number" in decision.subject) {
     if (trigger) await writer!.removeLabel(decision.subject.number, trigger);
@@ -96,7 +110,7 @@ export async function runRouter(io: RouterIO): Promise<Decision> {
     await postRefusal(decision, { io, loaded, reader, writer, trigger });
   }
 
-  io.summary(summaryFor(decision, loaded));
+  io.summary(summaryFor(decision, loaded, tickReport));
   io.setOutput("decision", JSON.stringify(decision));
   if (decision.kind === "run") {
     io.setOutput("task", decision.task);
@@ -106,6 +120,27 @@ export async function runRouter(io: RouterIO): Promise<Decision> {
 }
 
 type Refusal = Extract<Decision, { kind: "refuse" }>;
+type Event = { name: string; payload: Record<string, unknown> };
+
+/**
+ * A sweep dispatch (`factory-run` naming a trigger label) stands for the label event that was dropped or held
+ * back. It becomes that event, with the person who added the label as its sender, so it's routed and checked
+ * exactly like one. An item that's closed or no longer carries the label was handled meanwhile.
+ */
+async function resolveSweptItem(event: Event, reader: GitHubApi): Promise<Event | { ignore: string }> {
+  const payload = event.payload as { action?: string; client_payload?: { trigger?: string; number?: number } };
+  const { trigger, number } = payload.client_payload ?? {};
+  if (event.name !== "repository_dispatch" || payload.action !== RUN_DISPATCH || !trigger?.startsWith("agent:")) return event;
+  if (typeof number !== "number") return { ignore: `a ${RUN_DISPATCH} dispatch for ${trigger} names no item` };
+  const item = await reader.getIssue(number);
+  if (!item.open || !item.labels.includes(trigger)) return { ignore: `#${number} no longer waits on ${trigger}` };
+  const label = { name: trigger };
+  const sender = { login: (await reader.labeler(number, trigger)) ?? "(unknown)" };
+  if (!item.isPullRequest) return { name: "issues", payload: { action: "labeled", label, issue: { number }, sender } };
+  const pull = await reader.getPull(number);
+  const pullRequest = { number, head: { repo: pull.headRepo ? { full_name: pull.headRepo } : null }, base: { repo: { full_name: pull.baseRepo } } };
+  return { name: "pull_request_target", payload: { action: "labeled", label, pull_request: pullRequest, sender } };
+}
 type Run = Extract<Decision, { kind: "run" }>;
 
 /** `runsPerDay` defers the run (the label stays, so a later tick picks it up); the loop brake parks the item. */
@@ -146,7 +181,8 @@ async function postDeferral(decision: Extract<Decision, { kind: "defer" }>, writ
 
 /**
  * Comments on the item and takes the trigger label off, so the sweep doesn't refuse it again on every tick.
- * Without a subject, the refusal goes to `operatorIssue` when the config names one.
+ * A scheduled run's refusal goes on its `schedule.subject`. Without either, it goes to `operatorIssue` when the
+ * config names one, once a day per kind of refusal, since every tick would repeat it.
  */
 async function postRefusal(
   decision: Refusal,
@@ -156,14 +192,19 @@ async function postRefusal(
     ctx.io.runUrl ? `\n\n[Run](${ctx.io.runUrl})` : ""
   }`;
   const subject = decision.subject;
-  if (subject && "number" in subject) {
+  const target = subject && ("number" in subject ? subject.number : subject.origin);
+  if (target !== undefined) {
     const poster = ctx.writer ?? ctx.reader;
-    await poster.comment(subject.number, body);
-    if (ctx.trigger) await poster.removeLabel(subject.number, ctx.trigger);
+    await poster.comment(target, body);
+    if (ctx.trigger) await poster.removeLabel(target, ctx.trigger);
     return;
   }
   const operatorIssue = ctx.loaded.config.operatorIssue;
-  if (ctx.writer && typeof operatorIssue === "number") await ctx.writer.comment(operatorIssue, body);
+  if (!ctx.writer || typeof operatorIssue !== "number") return;
+  const day = (ctx.io.now ?? new Date()).toISOString().slice(0, 10);
+  const marker = `<!-- factory:refused ${decision.code} ${day} -->`;
+  if ((await ctx.writer.listComments(operatorIssue)).some((c) => c.body.startsWith(marker))) return;
+  await ctx.writer.comment(operatorIssue, `${marker}\n${body}`);
 }
 
 /** Creates or updates every label the merged config needs: its `labels`, each task's label, and `agent:blocked`. */
@@ -187,8 +228,9 @@ async function ensureLabels(reader: GitHubApi, writer: GitHubApi, config: Record
   }
 }
 
-function summaryFor(decision: Decision, loaded: LoadResult): string {
+function summaryFor(decision: Decision, loaded: LoadResult, tickReport?: string[]): string {
   const lines = [`### actions-factory: ${headline(decision)}`, ""];
+  if (tickReport) lines.push(tickReport.length > 0 ? tickReport.join("\n") : "Nothing is due or waiting.", "");
   for (const warning of decision.warnings) lines.push(`> [!WARNING]`, `> ${warning}`, "");
   if (decision.kind === "refuse") lines.push(decision.message, "");
   if (decision.kind === "defer") lines.push(decision.reason, "");
@@ -205,7 +247,7 @@ function headline(decision: Decision): string {
     case "command":
       return decision.command === "show-config" ? "show-config" : `${decision.command} (not available yet)`;
     case "sweep":
-      return "sweep (not available yet)";
+      return "tick";
     case "defer":
       return `deferred on ${"number" in decision.subject ? `#${decision.subject.number}` : decision.subject.kind}`;
     case "ignore":

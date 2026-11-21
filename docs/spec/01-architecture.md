@@ -15,7 +15,7 @@ factory.yml                                 ├─ route job      (ubuntu-latest
 - **Stub.** One fixed workflow that the client copies once. It wakes on:
   - `issues` and `pull_request_target` `labeled` events whose label starts with `agent:`. A job-level `if:` filters on the prefix before any runner starts. Other labels still leave a skipped run, with no runner, in the Actions list. `startsWith` ignores case, so the router re-checks the label exactly;
   - `workflow_dispatch`, with a `command` input (`doctor`, `show-config`);
-  - `repository_dispatch`, which the router ignores for now. It's reserved for external triggers, so they can come later without a new stub;
+  - `repository_dispatch`. Type `factory-run` is how the tick starts each run (section 7). Other types are ignored, reserved for external triggers, so they can come later without a new stub;
   - a `schedule` tick every 15 minutes.
 
   It doesn't listen to `issue_comment`. Every comment would wake it, including the factory's own, and comment-triggered tasks would need new task fields anyway (#36).

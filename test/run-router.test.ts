@@ -15,6 +15,12 @@ tasks:
     prompt: p.md
     outcomes:
       done: { addLabels: [needs-a-human] }
+  nightly:
+    subject: repo
+    prompt: p.md
+    schedule: { cron: "0 9 * * *" }
+    outcomes:
+      done: {}
 `;
 
 let gh: FakeGitHub;
@@ -99,7 +105,8 @@ describe("runRouter", () => {
     expect((gh.calls("comment")[0].args as { body: string }).body).toContain("FACTORY_TOKEN");
   });
 
-  it("sends a refusal with no subject to operatorIssue", async () => {
+  it("sends a refusal with no subject to operatorIssue, once a day however many ticks repeat it", async () => {
+    await runRouter(io({ eventName: "schedule", payload: {}, stubVersion: "0.9.0" }));
     await runRouter(io({ eventName: "schedule", payload: {}, stubVersion: "0.9.0" }));
 
     expect(gh.calls("comment").map((w) => (w.args as { number: number }).number)).toEqual([1]);
@@ -166,6 +173,102 @@ describe("runRouter", () => {
       await runRouter(io({ clientRoot }));
 
       expect(gh.calls("removeAssignees").map((w) => w.args)).toEqual([{ number: 42, logins: ["ana"] }]);
+    });
+  });
+
+  describe("the tick", () => {
+    const now = new Date("2026-11-21T09:05:00Z");
+    const tick = (overrides: Partial<RouterIO> = {}) => runRouter(io({ eventName: "schedule", payload: {}, runId: 500, now, ...overrides }));
+    const dispatched = () => gh.calls("dispatch").map((w) => ({ token: w.token, ...(w.args as { payload: object }) }));
+
+    beforeEach(() => {
+      // This tick, a failed one (its window wasn't handled), and the last good one at 06:00.
+      gh.ticks = [
+        { id: 500, createdAt: "2026-11-21T09:04:00Z", conclusion: null },
+        { id: 499, createdAt: "2026-11-21T08:49:00Z", conclusion: "failure" },
+        { id: 498, createdAt: "2026-11-21T06:00:00Z", conclusion: "success" },
+      ];
+    });
+
+    it("starts a scheduled task once for its latest slot, then waiting items oldest first, skipping blocked and busy ones", async () => {
+      gh.issues = {
+        30: { title: "", body: "", labels: ["agent:implement"] },
+        12: { title: "", body: "", labels: ["agent:implement"] },
+        15: { title: "", body: "", labels: ["agent:implement", "agent:blocked"] },
+        20: { title: "", body: "", labels: ["agent:implement"] },
+        25: { title: "", body: "", labels: ["agent:implement"], open: false },
+      };
+      gh.runs = [{ id: 401, title: "factory · agent:implement · #20", status: "in_progress", conclusion: null }];
+
+      const decision = await tick();
+
+      expect(decision).toMatchObject({ kind: "sweep" });
+      expect(dispatched()).toEqual([
+        { token: "factory-token", eventType: "factory-run", payload: { task: "nightly", trigger: "schedule:nightly" } },
+        { token: "factory-token", eventType: "factory-run", payload: { task: "implement", trigger: "agent:implement", number: 12 } },
+        { token: "factory-token", eventType: "factory-run", payload: { task: "implement", trigger: "agent:implement", number: 30 } },
+      ]);
+      expect(summary.join("\n")).toContain("`nightly`, scheduled for 2026-11-21T09:00:00.000Z: started");
+      expect(outputs.task).toBeUndefined();
+    });
+
+    it("starts nothing more once today's runs reach runsPerDay", async () => {
+      gh.issues = { 12: { title: "", body: "", labels: ["agent:implement"] } };
+      gh.runs = Array.from({ length: 49 }, (_, i) => ({ id: i + 1, title: "factory · agent:implement · #3", conclusion: "success" }));
+
+      await tick();
+
+      expect(dispatched().map((d) => d.payload)).toEqual([{ task: "nightly", trigger: "schedule:nightly" }]);
+      expect(summary.join("\n")).toContain("`agent:implement` on #12: held back");
+    });
+
+    it("starts nothing when no slot falls since the last handled tick and nothing waits", async () => {
+      gh.ticks[2].createdAt = "2026-11-21T09:01:00Z";
+
+      await tick();
+
+      expect(gh.calls("dispatch")).toEqual([]);
+      expect(summary.join("\n")).toContain("Nothing is due or waiting.");
+    });
+  });
+
+  describe("an item the tick swept", () => {
+    const swept = (number: number) =>
+      io({
+        eventName: "repository_dispatch",
+        payload: { action: "factory-run", client_payload: { task: "implement", trigger: "agent:implement", number }, sender: { login: "factory-bot" } },
+      });
+
+    it("runs as the label event it stands for, checked against the person who added the label", async () => {
+      gh.issues = { 42: { title: "", body: "", labels: ["agent:implement"] } };
+      gh.labelers = { "42:agent:implement": "ana" };
+
+      const decision = await runRouter(swept(42));
+
+      expect(decision).toMatchObject({ kind: "run", task: "implement", subject: { kind: "issue", number: 42 }, actor: "ana" });
+      expect(gh.calls("removeLabel").map((w) => w.args)).toEqual([{ number: 42, name: "agent:implement" }]);
+    });
+
+    it("refuses a label added by someone without write access", async () => {
+      gh.issues = { 42: { title: "", body: "", labels: ["agent:implement"] } };
+      gh.labelers = { "42:agent:implement": "tri" };
+
+      expect(await runRouter(swept(42))).toMatchObject({ kind: "refuse", code: "not-writer" });
+    });
+
+    it("refuses a pull request from a fork", async () => {
+      gh.issues = { 7: { title: "", body: "", labels: ["agent:implement"], isPullRequest: true } };
+      gh.pulls = { 7: { head: "main", mergeable: false, headRepo: "someone/fork" } };
+      gh.labelers = { "7:agent:implement": "ana" };
+
+      expect(await runRouter(swept(7))).toMatchObject({ kind: "refuse", code: "fork" });
+    });
+
+    it("does nothing when the item was handled meanwhile", async () => {
+      gh.issues = { 42: { title: "", body: "", labels: [] } };
+
+      expect(await runRouter(swept(42))).toMatchObject({ kind: "ignore", reason: "#42 no longer waits on agent:implement" });
+      expect(gh.writes).toEqual([]);
     });
   });
 });

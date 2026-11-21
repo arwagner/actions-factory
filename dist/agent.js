@@ -15220,7 +15220,9 @@ var defs_schema_default = {
               description: "Five-field cron, in `timezone`."
             },
             subject: {
-              $ref: "#/$defs/subject"
+              type: "integer",
+              minimum: 1,
+              description: "The issue or PR a scheduled run is about, and where its refusals and failures go."
             }
           }
         },
@@ -15437,6 +15439,58 @@ var template_schema_default = {
   unevaluatedProperties: false
 };
 
+// src/router/cron.ts
+var MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+var DAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+var FIELDS = [
+  { name: "minute", min: 0, max: 59 },
+  { name: "hour", min: 0, max: 23 },
+  { name: "day of month", min: 1, max: 31 },
+  { name: "month", min: 1, max: 12, names: MONTHS, offset: 1 },
+  { name: "day of week", min: 0, max: 7, names: DAYS, offset: 0 }
+];
+function parseCron(expression) {
+  const parts = expression.trim().split(/\s+/);
+  if (parts.length !== 5) throw new Error(`a cron needs five fields, not ${parts.length}: ${expression}`);
+  const sets = parts.map((part, i) => parseField(part, FIELDS[i]));
+  const dayOfWeek = new Set([...sets[4]].map((d) => d % 7));
+  return {
+    minute: sets[0],
+    hour: sets[1],
+    dayOfMonth: sets[2],
+    month: sets[3],
+    dayOfWeek,
+    domRestricted: !parts[2].startsWith("*"),
+    dowRestricted: !parts[4].startsWith("*")
+  };
+}
+function parseField(part, field) {
+  const values = /* @__PURE__ */ new Set();
+  const value = (text) => {
+    const lower = text.toLowerCase();
+    const named = "names" in field ? field.names.indexOf(lower) + field.offset : -1;
+    const n = named >= field.min ? named : /^\d+$/.test(text) ? Number(text) : Number.NaN;
+    if (!(n >= field.min && n <= field.max)) throw new Error(`${text} isn't a valid ${field.name}`);
+    return n;
+  };
+  for (const item of part.split(",")) {
+    const [range, stepText] = item.split("/");
+    const step = stepText === void 0 ? 1 : Number(stepText);
+    if (!Number.isInteger(step) || step < 1) throw new Error(`${item} has a bad step`);
+    let [from, to] = [field.min, field.max];
+    if (range !== "*") {
+      const [a, b] = range.split("-");
+      from = value(a);
+      to = b === void 0 ? stepText === void 0 ? from : field.max : value(b);
+      if (to < from) throw new Error(`${range} runs backwards`);
+    }
+    for (let n = from; n <= to; n += step) values.add(n);
+  }
+  return values;
+}
+var MINUTE = 6e4;
+var LOOKBACK_MS = 31 * 24 * 60 * MINUTE;
+
 // src/config/rules.ts
 var MERGE_LABEL = "agent:merge";
 var MERGE_BY_PERSON = `${MERGE_LABEL} is added only by a person`;
@@ -15449,6 +15503,16 @@ function checkHardRules(config) {
     const at = (field) => `tasks.${name}.${field}`;
     if (!task.label && !task.schedule) {
       errors.push({ path: `tasks.${name}`, message: "needs a label or a schedule to ever run" });
+    }
+    if (task.schedule) {
+      try {
+        parseCron(task.schedule.cron);
+      } catch (error) {
+        errors.push({ path: at("schedule.cron"), message: error.message });
+      }
+      if ((task.subject === "issue" || task.subject === "pr") && task.schedule.subject === void 0) {
+        errors.push({ path: at("schedule.subject"), message: `a scheduled ${task.subject} task needs the number of the ${task.subject === "pr" ? "pull request" : "issue"} it's about` });
+      }
     }
     if (task.query !== void 0 && task.subject !== "batch") {
       errors.push({ path: at("query"), message: "allowed only with subject: batch" });
@@ -15805,7 +15869,31 @@ function gitHubApi(token, owner, repo, baseUrl = "https://api.github.com") {
     },
     async getIssue(issueNumber) {
       const issue = await call("GET", `/issues/${issueNumber}`);
-      return { title: issue.title, body: issue.body ?? "", isPullRequest: issue.pull_request !== void 0 };
+      return {
+        title: issue.title,
+        body: issue.body ?? "",
+        isPullRequest: issue.pull_request !== void 0,
+        open: issue.state === "open",
+        labels: issue.labels.map((l) => l.name)
+      };
+    },
+    async listOpenLabeled(label) {
+      const items = [];
+      for (let page = 1; page <= 10; page++) {
+        const batch = await call("GET", `/issues?state=open&labels=${enc(label)}&sort=created&direction=asc&per_page=100&page=${page}`);
+        items.push(...batch.map((i) => ({ number: i.number, labels: i.labels.map((l) => l.name) })));
+        if (batch.length < 100) break;
+      }
+      return items;
+    },
+    async labeler(issueNumber, label) {
+      let actor;
+      for (let page = 1; page <= 10; page++) {
+        const batch = await call("GET", `/issues/${issueNumber}/events?per_page=100&page=${page}`);
+        for (const e of batch) if (e.event === "labeled" && e.label?.name === label) actor = e.actor?.login;
+        if (batch.length < 100) break;
+      }
+      return actor;
     },
     async searchIssues(query) {
       const q = encodeURIComponent(`repo:${owner}/${repo} is:issue is:open ${query}`);
@@ -15832,6 +15920,8 @@ function gitHubApi(token, owner, repo, baseUrl = "https://api.github.com") {
       const running = checks.check_runs.some((c) => c.status !== "completed");
       return {
         head: pull.head.ref,
+        headRepo: pull.head.repo?.full_name ?? null,
+        baseRepo: pull.base.repo.full_name,
         mergeable: pull.mergeable === true && pull.mergeable_state === "clean",
         pending: pull.mergeable === null || pull.mergeable_state === "unknown" || running
       };
@@ -15846,10 +15936,17 @@ function gitHubApi(token, owner, repo, baseUrl = "https://api.github.com") {
       const runs = [];
       for (let page = 1; page <= 10; page++) {
         const batch = await call("GET", `/actions/runs?per_page=100&page=${page}&created=${enc(`>=${since}`)}`);
-        runs.push(...batch.workflow_runs.map((r) => ({ id: r.id, title: r.display_title, conclusion: r.conclusion })));
+        runs.push(...batch.workflow_runs.map((r) => ({ id: r.id, title: r.display_title, status: r.status, conclusion: r.conclusion })));
         if (batch.workflow_runs.length < 100) break;
       }
       return runs;
+    },
+    async listTicks() {
+      const batch = await call("GET", "/actions/runs?event=schedule&per_page=100");
+      return batch.workflow_runs.filter((r) => r.display_title === "factory \xB7 tick").map((r) => ({ id: r.id, createdAt: r.created_at, conclusion: r.conclusion }));
+    },
+    async dispatch(eventType, payload) {
+      await call("POST", "/dispatches", { event_type: eventType, client_payload: payload });
     },
     async addAssignees(issueNumber, logins) {
       await call("POST", `/issues/${issueNumber}/assignees`, { assignees: logins });
