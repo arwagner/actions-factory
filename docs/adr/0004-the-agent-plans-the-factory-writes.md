@@ -1,0 +1,3 @@
+# 4. The agent plans; the factory writes
+
+The agent never holds `FACTORY_TOKEN`. It works in a checkout and hands back a plan: an outcome from the task's declared list, plus the writes it asks for (comments, labels, a pull request, a merge). The factory checks the plan against what the task allows and makes every write itself. Giving the agent the token and letting it call `gh` directly would be simpler and more flexible. But issue and PR text is untrusted, and this is the main barrier between a prompt injection and the client repo. It also gives every write a cap and a record. aint-farm works the same way.

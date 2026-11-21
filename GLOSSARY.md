@@ -17,3 +17,11 @@
 **Template**: A named preset, picked in the factory config, that can change which tasks exist and how they connect. The factory config can customize it further.
 
 **Default template**: The template used when the factory config names none. It is the simple set.
+
+**Subject**: What one run of a task is about: a single ticket, a single pull request, a batch of tickets, or the repo as a whole.
+
+**Outcome**: One of the named results a task declares, such as `easy-call` or `needs-a-human`. The agent picks exactly one, and the outcome decides which labels come next.
+
+**Hook**: A script a template ships alongside a task, run by the factory before or after the agent, never by the agent itself. It prepares the agent's inputs or turns its plan into writes.
+
+**Plan**: The structured result an agent hands back: its outcome, plus the writes it asks for. The factory checks the plan against the task and makes the writes itself. _Avoid_: output, response.
