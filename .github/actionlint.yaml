@@ -1,0 +1,5 @@
+paths:
+  .github/workflows/router.yml:
+    ignore:
+      # actionlint's context schema predates job.workflow_repository / job.workflow_sha.
+      - 'property "workflow_(repository|sha)" is not defined'

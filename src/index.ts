@@ -11,3 +11,5 @@ export { loadConfig, type FetchRepo, type Layer, type LoadOptions, type LoadResu
 export { renderConfig } from "./config/render.js";
 export { COMMANDS, route, type Command, type Decision, type RefusalCode, type RouteInput, type Subject } from "./router/route.js";
 export { MIN_STUB_VERSION, STUB_VERSION } from "./router/version.js";
+export { gitHubApi, type GitHubApi, type Label } from "./router/github.js";
+export { runRouter, type RouterIO } from "./router/run.js";

@@ -1,0 +1,71 @@
+# The factory's entrypoint. Client stubs call this at the version they pin; never run it directly.
+name: router
+
+on:
+  workflow_call:
+    inputs:
+      stub-version:
+        description: The version the calling stub declares.
+        type: string
+        required: false
+    secrets:
+      FACTORY_TOKEN:
+        required: false
+      FACTORY_CHECK_ENV:
+        required: false
+      ANTHROPIC_API_KEY:
+        required: false
+      CLAUDE_CODE_OAUTH_TOKEN:
+        required: false
+      OPENAI_API_KEY:
+        required: false
+      CODEX_ACCESS_TOKEN:
+        required: false
+      COPILOT_GITHUB_TOKEN:
+        required: false
+
+jobs:
+  route:
+    runs-on: ubuntu-latest
+    outputs:
+      decision: ${{ steps.route.outputs.decision }}
+      task: ${{ steps.route.outputs.task }}
+      factory-repository: ${{ steps.factory.outputs.repository }}
+      factory-sha: ${{ steps.factory.outputs.sha }}
+    steps:
+      # The default ref: the default branch, or a PR's base branch. Never PR code.
+      - name: Check out the client repo
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      # job.workflow_* are read here only, on ubuntu-latest, and passed on as outputs (#29).
+      - name: Fetch the factory at the pinned commit
+        id: factory
+        env:
+          REPOSITORY: ${{ job.workflow_repository }}
+          SHA: ${{ job.workflow_sha }}
+          SERVER: ${{ github.server_url }}
+        run: |
+          dir="$RUNNER_TEMP/actions-factory"
+          git init -q "$dir"
+          git -C "$dir" fetch -q --depth 1 "$SERVER/$REPOSITORY" "$SHA"
+          git -C "$dir" -c advice.detachedHead=false checkout -q FETCH_HEAD
+          {
+            echo "root=$dir"
+            echo "repository=$REPOSITORY"
+            echo "sha=$SHA"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: Route
+        id: route
+        env:
+          FACTORY_ROOT: ${{ steps.factory.outputs.root }}
+          STUB_VERSION: ${{ inputs.stub-version }}
+          FACTORY_TOKEN: ${{ secrets.FACTORY_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node "$FACTORY_ROOT/dist/router.js"
