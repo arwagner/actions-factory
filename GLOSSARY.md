@@ -12,9 +12,11 @@
 
 **Agent**: The coding CLI that does a task's thinking and editing (for example Claude Code or Codex). Which one runs can be swapped.
 
-**Factory config**: The `factory.yml` file in a client repo that turns tasks on and shapes how they run.
+**Factory config**: The `factory.yml` file in a client repo. It names a template and adds the client's own changes as the last layer on top of it.
 
-**Template**: A named preset, picked in the factory config, that can change which tasks exist and how they connect. The factory config can customize it further.
+**Template**: A named folder of tasks, labels, prompts, skills, hooks and defaults that defines how the factory works. A template can extend one other template. It can come from this repo, from the client repo, or from another repo.
+
+**Layer**: One template, or the factory config, in the stack that builds a client's final setup. Each layer changes the one beneath it, using the same merge rules at every level.
 
 **Default template**: The template used when the factory config names none. It is the simple set.
 
