@@ -24,8 +24,8 @@ permissions: {}
 
 jobs:
   factory:
-    # Label events that aren't agent: labels stop here, before a runner starts.
-    if: github.event_name != 'issues' && github.event_name != 'pull_request_target' || startsWith(github.event.label.name, 'agent:')
+    # Label events other than agent: labels (and agent:blocked, which starts nothing) stop here, before a runner starts.
+    if: github.event_name != 'issues' && github.event_name != 'pull_request_target' || startsWith(github.event.label.name, 'agent:') && github.event.label.name != 'agent:blocked'
     # Pin @v1 (default), @latest, or an exact @vX.Y.Z / commit SHA.
     uses: arwagner/actions-factory/.github/workflows/router.yml@v1
     permissions:
