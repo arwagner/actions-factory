@@ -12,6 +12,8 @@
 
 **Agent**: The coding CLI that does a task's thinking and editing (for example Claude Code or Codex). Which one runs can be swapped.
 
+**Adapter**: The part of the factory that runs one particular agent: it hands the agent its prompt, skills and limits, and collects its plan and transcript. Each agent the factory supports has one adapter.
+
 **Factory config**: The `factory.yml` file in a client repo. It names a template and adds the client's own changes as the last layer on top of it.
 
 **Template**: A named folder of tasks, labels, prompts, skills, hooks and defaults that defines how the factory works. A template can extend one other template. It can come from this repo, from the client repo, or from another repo.
