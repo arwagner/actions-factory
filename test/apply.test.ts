@@ -110,6 +110,14 @@ describe("applyRun", () => {
     expect(statusBody(42)).toContain("timed out");
   });
 
+  it("gives the agent job's reason when it knows why the agent failed", async () => {
+    const agentError = "the codex agent has no credential. Set the `OPENAI_API_KEY` or `CODEX_ACCESS_TOKEN` secret.";
+
+    await applyRun(io({ agentStatus: "failed", agentError, plan: undefined }));
+
+    expect(statusBody(42)).toContain(`stopped: ${agentError} To retry, add \`agent:implement\` again.`);
+  });
+
   describe("on a pull request", () => {
     const review = { ...implement, label: "agent:review", subject: "pr", writes: { ...writes, push: true } };
     const pr = { kind: "pr" as const, number: 7 };

@@ -32,7 +32,7 @@ export function copilotAdapter(options: CopilotOptions = {}): Adapter {
     credentials: CREDENTIALS,
     async run(input) {
       const binary = await install();
-      const home = mkdtempSync(join(tmpdir(), "factory-copilot-"));
+      const home = mkdtempSync(join(process.env.RUNNER_TEMP ?? tmpdir(), "factory-copilot-"));
       try {
         for (const [name, path] of Object.entries(input.skills)) cpSync(path, join(home, "skills", name), { recursive: true });
         const prompt = readFileSync(input.promptFile, "utf8") + (input.permission === "read-only" ? READ_ONLY_PLAN : "");
@@ -63,7 +63,7 @@ export function copilotAdapter(options: CopilotOptions = {}): Adapter {
     },
     async ping() {
       const binary = await install();
-      const home = mkdtempSync(join(tmpdir(), "factory-copilot-"));
+      const home = mkdtempSync(join(process.env.RUNNER_TEMP ?? tmpdir(), "factory-copilot-"));
       try {
         const { code, stdout, timedOut } = await runCli(binary, ["-p", "Reply with the single word OK.", ...BASE], {
           cwd: home,

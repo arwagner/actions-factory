@@ -16079,7 +16079,7 @@ function recording(api, writes) {
 }
 async function applyWrites(io) {
   if (io.agentStatus !== "ok") {
-    throw new Refusal(io.agentStatus === "timed-out" ? "the agent timed out." : "the agent failed.");
+    throw new Refusal(io.agentStatus === "timed-out" ? "the agent timed out." : io.agentError ? `${io.agentError}` : "the agent failed.");
   }
   const ctx = {
     subject: io.subject.kind === "batch" ? { kind: "batch", numbers: io.batchNumbers ?? [] } : io.subject,
@@ -16298,6 +16298,7 @@ async function main() {
     planSchema: task.planSchema ? readJson(task.planSchema) : void 0,
     plan: readJson(join3(handoff, "plan.json")),
     agentStatus: meta.agentStatus,
+    agentError: meta.agentError,
     checksPassed: meta.checksPassed,
     git: bundledWork({ checkout, bundle: join3(handoff, "work.bundle"), remote: `${server}/${owner}/${repo}`, token }),
     api: gitHubApi(token, owner, repo, env("GITHUB_API_URL")),

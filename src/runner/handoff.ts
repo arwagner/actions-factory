@@ -18,6 +18,8 @@ export interface HandoffMeta {
   agentSeconds?: number;
   /** The last round's checks, in order, up to the first that failed. */
   checks?: Array<{ command: string; ok: boolean; seconds: number }>;
+  /** Why the agent failed, when the factory knows (a missing credential, say). Never holds a secret. */
+  agentError?: string;
   /** Whether `transcript.ndjson` is in the artifact (private repos, §9). */
   transcript?: boolean;
 }

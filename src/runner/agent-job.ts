@@ -49,6 +49,8 @@ export interface AgentJobIO {
   runCommand: (command: string, env: Record<string, string>) => Promise<{ code: number; output: string }>;
   runHook: (path: string, env: Record<string, string>) => Promise<void>;
   log: (line: string) => void;
+  /** The step's environment, where the agent's credentials are. */
+  env: Record<string, string | undefined>;
 }
 
 interface State {
@@ -60,6 +62,7 @@ interface State {
   checksPassed?: boolean;
   checkFailure?: string;
   checkResults?: HandoffMeta["checks"];
+  agentError?: string;
   agentSeconds?: number;
   turnsRun: number;
   usage?: HandoffMeta["usage"];
@@ -108,7 +111,14 @@ export async function runTurn(io: AgentJobIO, turn: number): Promise<void> {
   const adapter = io.adapters[io.task.agent];
   if (!adapter) {
     io.log(`::error::no adapter named ${io.task.agent}`);
-    saveState(io, { ...state, agentStatus: "failed", turnsRun: turn });
+    saveState(io, { ...state, agentStatus: "failed", turnsRun: turn, agentError: `this factory release has no ${io.task.agent} adapter` });
+    return;
+  }
+  // §2: a run whose agent has no credential stops before the CLI starts, naming the secret it needs.
+  if (adapter.credentials.length > 0 && !adapter.credentials.some((name) => io.env[name])) {
+    const agentError = `the ${adapter.name} agent has no credential. Set the ${adapter.credentials.map((n) => `\`${n}\``).join(" or ")} secret.`;
+    io.log(`::error::${agentError}`);
+    saveState(io, { ...state, agentStatus: "failed", turnsRun: turn, agentError });
     return;
   }
   // If the step's own timeout kills this round, the state already says so.
@@ -177,6 +187,7 @@ export async function handoff(io: AgentJobIO): Promise<void> {
     turnsRun: state?.turnsRun,
     agentSeconds: state?.agentSeconds,
     checks: state?.checkResults,
+    agentError: state?.agentError,
     transcript: io.uploadTranscript && existsSync(f.transcript),
   };
   writeFileSync(join(f.handoff, "meta.json"), JSON.stringify(meta, null, 2));

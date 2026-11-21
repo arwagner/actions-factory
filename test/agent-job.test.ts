@@ -48,6 +48,7 @@ function setup(files: Record<string, string>, task: Partial<AgentTask> = {}): Ag
       hookEnvs.push(env);
     },
     log: (line) => logs.push(line),
+    env: {},
   };
 }
 
@@ -152,6 +153,27 @@ describe("the agent job", () => {
     await runChecks(ungated, 1, undefined);
     await handoff(ungated);
     expect(meta(ungated).checksPassed).toBe(true);
+  });
+
+  it("stops before the CLI starts when the agent has no credential, naming the secrets to set", async () => {
+    let ran = false;
+    const keyed = { name: "codex", credentials: ["OPENAI_API_KEY", "CODEX_ACCESS_TOKEN"], run: async () => ((ran = true), { status: "ok" as const }), ping: async () => ({ ok: true, detail: "" }) };
+    const io = { ...setup({}, { agent: "codex" }), adapters: { codex: keyed } };
+
+    await prepare(io);
+    await runTurn(io, 1);
+    await handoff(io);
+
+    expect(ran).toBe(false);
+    expect(meta(io)).toMatchObject({
+      agentStatus: "failed",
+      agentError: "the codex agent has no credential. Set the `OPENAI_API_KEY` or `CODEX_ACCESS_TOKEN` secret.",
+    });
+
+    const withKey = { ...setup({}, { agent: "codex" }), adapters: { codex: keyed }, env: { CODEX_ACCESS_TOKEN: "t" } };
+    await prepare(withKey);
+    await runTurn(withKey, 1);
+    expect(ran).toBe(true);
   });
 
   it("keeps commits the agent made itself, measured from where the job started", async () => {

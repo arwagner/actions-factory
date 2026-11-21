@@ -46,6 +46,7 @@ async function main(): Promise<void> {
     planSchema: task.planSchema ? readJson(task.planSchema) : undefined,
     plan: readJson(join(handoff, "plan.json")),
     agentStatus: meta.agentStatus,
+    agentError: meta.agentError,
     checksPassed: meta.checksPassed,
     git: bundledWork({ checkout, bundle: join(handoff, "work.bundle"), remote: `${server}/${owner}/${repo}`, token }),
     api: gitHubApi(token, owner, repo, env("GITHUB_API_URL")),

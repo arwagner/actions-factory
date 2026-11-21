@@ -16233,7 +16233,7 @@ var CREDENTIALS2 = ["OPENAI_API_KEY", "CODEX_ACCESS_TOKEN"];
 function codexAdapter(options = {}) {
   const install = options.install ?? (() => installPinned("codex", "@openai/codex", CODEX_VERSION, "codex"));
   async function session(binary) {
-    const home = mkdtempSync3(join5(tmpdir2(), "factory-codex-"));
+    const home = mkdtempSync3(join5(process.env.RUNNER_TEMP ?? tmpdir2(), "factory-codex-"));
     const apiKey = process.env.OPENAI_API_KEY;
     const accessToken = process.env.CODEX_ACCESS_TOKEN;
     const secrets = [apiKey, accessToken].filter((v) => Boolean(v));
@@ -16325,7 +16325,7 @@ function copilotAdapter(options = {}) {
     credentials: CREDENTIALS3,
     async run(input) {
       const binary = await install();
-      const home = mkdtempSync4(join6(tmpdir3(), "factory-copilot-"));
+      const home = mkdtempSync4(join6(process.env.RUNNER_TEMP ?? tmpdir3(), "factory-copilot-"));
       try {
         for (const [name, path] of Object.entries(input.skills)) cpSync3(path, join6(home, "skills", name), { recursive: true });
         const prompt = readFileSync4(input.promptFile, "utf8") + (input.permission === "read-only" ? READ_ONLY_PLAN : "");
@@ -16352,7 +16352,7 @@ function copilotAdapter(options = {}) {
     },
     async ping() {
       const binary = await install();
-      const home = mkdtempSync4(join6(tmpdir3(), "factory-copilot-"));
+      const home = mkdtempSync4(join6(process.env.RUNNER_TEMP ?? tmpdir3(), "factory-copilot-"));
       try {
         const { code, stdout, timedOut } = await runCli(binary, ["-p", "Reply with the single word OK.", ...BASE], {
           cwd: home,
@@ -17021,7 +17021,7 @@ function recording(api, writes) {
 }
 async function applyWrites(io) {
   if (io.agentStatus !== "ok") {
-    throw new Refusal(io.agentStatus === "timed-out" ? "the agent timed out." : "the agent failed.");
+    throw new Refusal(io.agentStatus === "timed-out" ? "the agent timed out." : io.agentError ? `${io.agentError}` : "the agent failed.");
   }
   const ctx = {
     subject: io.subject.kind === "batch" ? { kind: "batch", numbers: io.batchNumbers ?? [] } : io.subject,
@@ -17345,7 +17345,13 @@ async function runTurn(io, turn) {
   const adapter = io.adapters[io.task.agent];
   if (!adapter) {
     io.log(`::error::no adapter named ${io.task.agent}`);
-    saveState(io, { ...state, agentStatus: "failed", turnsRun: turn });
+    saveState(io, { ...state, agentStatus: "failed", turnsRun: turn, agentError: `this factory release has no ${io.task.agent} adapter` });
+    return;
+  }
+  if (adapter.credentials.length > 0 && !adapter.credentials.some((name) => io.env[name])) {
+    const agentError = `the ${adapter.name} agent has no credential. Set the ${adapter.credentials.map((n) => `\`${n}\``).join(" or ")} secret.`;
+    io.log(`::error::${agentError}`);
+    saveState(io, { ...state, agentStatus: "failed", turnsRun: turn, agentError });
     return;
   }
   saveState(io, { ...state, agentStatus: "timed-out", checksPassed: void 0, turnsRun: turn });
@@ -17407,6 +17413,7 @@ async function handoff(io) {
     turnsRun: state?.turnsRun,
     agentSeconds: state?.agentSeconds,
     checks: state?.checkResults,
+    agentError: state?.agentError,
     transcript: io.uploadTranscript && existsSync8(f.transcript)
   };
   writeFileSync5(join9(f.handoff, "meta.json"), JSON.stringify(meta, null, 2));

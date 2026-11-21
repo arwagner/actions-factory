@@ -20,6 +20,8 @@ export interface ApplyIO {
   /** The agent's `plan.json`, or undefined if it wrote none. */
   plan: unknown;
   agentStatus: "ok" | "failed" | "timed-out";
+  /** Why the agent failed, when the agent job knows. */
+  agentError?: string;
   /** False when checks failed and the task gates on them (`checksGate`). */
   checksPassed: boolean;
   /** The agent's work, from the handed-over git bundle. */
@@ -131,7 +133,7 @@ function recording(api: GitHubApi, writes: string[]): GitHubApi {
 
 async function applyWrites(io: ApplyIO): Promise<string> {
   if (io.agentStatus !== "ok") {
-    throw new Refusal(io.agentStatus === "timed-out" ? "the agent timed out." : "the agent failed.");
+    throw new Refusal(io.agentStatus === "timed-out" ? "the agent timed out." : io.agentError ? `${io.agentError}` : "the agent failed.");
   }
   const ctx: PlanContext = {
     subject: io.subject.kind === "batch" ? { kind: "batch", numbers: io.batchNumbers ?? [] } : io.subject,

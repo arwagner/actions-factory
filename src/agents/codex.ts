@@ -26,7 +26,7 @@ export function codexAdapter(options: CodexOptions = {}): Adapter {
 
   /** A fresh `CODEX_HOME`, logged in, and the environment that goes with it. */
   async function session(binary: string): Promise<{ home: string; env: NodeJS.ProcessEnv; secrets: string[] }> {
-    const home = mkdtempSync(join(tmpdir(), "factory-codex-"));
+    const home = mkdtempSync(join(process.env.RUNNER_TEMP ?? tmpdir(), "factory-codex-"));
     const apiKey = process.env.OPENAI_API_KEY;
     const accessToken = process.env.CODEX_ACCESS_TOKEN;
     const secrets = [apiKey, accessToken].filter((v): v is string => Boolean(v));
