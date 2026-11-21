@@ -15897,7 +15897,16 @@ async function runRouter(io) {
       warnings: decision.warnings
     };
   }
-  if (writer && loaded.ok && decision.kind !== "ignore") await ensureLabels(reader, writer, loaded.config);
+  if (writer && loaded.ok && decision.kind !== "ignore") {
+    try {
+      await ensureLabels(reader, writer, loaded.config);
+    } catch (error) {
+      const reason2 = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `couldn't create labels with FACTORY_TOKEN (${reason2}). A 403 or 404 here usually means the token can't write this repo: check its resource owner, repository access, and Issues permission (and org approval).`
+      );
+    }
+  }
   const trigger = io.payload.label?.name;
   if (decision.kind === "run" && "number" in decision.subject && trigger) {
     await writer.removeLabel(decision.subject.number, trigger);

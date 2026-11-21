@@ -117,4 +117,15 @@ describe("runRouter", () => {
     expect(gh.writes).toEqual([]);
     expect(summary.join("\n")).toContain("nothing to do");
   });
+
+  it("explains a label write the token isn't allowed to make", async () => {
+    const api = (token: string) => ({
+      ...gh.api(token),
+      createLabel: async () => {
+        throw new Error("GitHub POST /labels failed: 404");
+      },
+    });
+
+    await expect(runRouter(io({ api }))).rejects.toThrow(/FACTORY_TOKEN .* can't write this repo/);
+  });
 });

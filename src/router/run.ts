@@ -59,7 +59,18 @@ export async function runRouter(io: RouterIO): Promise<Decision> {
     };
   }
 
-  if (writer && loaded.ok && decision.kind !== "ignore") await ensureLabels(reader, writer, loaded.config);
+  if (writer && loaded.ok && decision.kind !== "ignore") {
+    try {
+      await ensureLabels(reader, writer, loaded.config);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      // eslint-disable-next-line preserve-caught-error -- the message is the whole story; no secrets in it
+      throw new Error(
+        `couldn't create labels with FACTORY_TOKEN (${reason}). A 403 or 404 here usually means the token can't write ` +
+          "this repo: check its resource owner, repository access, and Issues permission (and org approval).",
+      );
+    }
+  }
 
   const trigger = (io.payload.label as { name?: string } | undefined)?.name;
   if (decision.kind === "run" && "number" in decision.subject && trigger) {
