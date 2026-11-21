@@ -1,0 +1,376 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/arwagner/actions-factory/schema/defs.schema.json",
+  "title": "actions-factory shared definitions",
+  "$defs": {
+    "templateRef": {
+      "type": "string",
+      "description": "A shipped template name (`default`), a folder in the client repo (`./factory/my-template`), or another repo pinned like an action (`owner/repo/path@ref`).",
+      "pattern": "^(\\./.+|[a-z0-9][a-z0-9-]*|[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(/[^@]+)?@[^@]+)$"
+    },
+    "agent": {
+      "enum": [
+        "claude",
+        "codex",
+        "copilot"
+      ],
+      "description": "Which agent CLI runs the task."
+    },
+    "model": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Model name passed to the adapter. Defaults to the adapter's default."
+    },
+    "runsOn": {
+      "description": "Runner label or labels for the agent job.",
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        }
+      ]
+    },
+    "container": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Container image for the agent job."
+    },
+    "textOrPath": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Inline text, or a path to a file."
+    },
+    "label": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 50
+    },
+    "labelList": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/label"
+      }
+    },
+    "labelSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "color": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{6}$",
+          "description": "Six hex digits, no `#`."
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 100
+        }
+      }
+    },
+    "subject": {
+      "enum": [
+        "issue",
+        "pr",
+        "batch",
+        "repo"
+      ]
+    },
+    "outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "addLabels": {
+          "$ref": "#/$defs/labelList",
+          "default": []
+        },
+        "removeLabels": {
+          "$ref": "#/$defs/labelList",
+          "default": []
+        },
+        "waitsOnPerson": {
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "writes": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "comment": {
+          "type": "boolean",
+          "default": true,
+          "description": "The plan may post a comment."
+        },
+        "labels": {
+          "$ref": "#/$defs/labelList",
+          "default": [],
+          "description": "Labels the plan may add or remove."
+        },
+        "pullRequest": {
+          "default": false,
+          "description": "`false`, or `{draft: boolean}` to let the plan open a pull request.",
+          "oneOf": [
+            {
+              "const": false
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "draft"
+              ],
+              "properties": {
+                "draft": {
+                  "type": "boolean"
+                }
+              }
+            }
+          ]
+        },
+        "push": {
+          "type": "boolean",
+          "default": false,
+          "description": "Push to an `agent/*` branch."
+        },
+        "closeIssue": {
+          "type": "boolean",
+          "default": false
+        },
+        "createIssues": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0,
+          "description": "Cap on issues the plan may create."
+        },
+        "merge": {
+          "type": "boolean",
+          "default": false,
+          "description": "Valid only on a task triggered by a label a person adds."
+        }
+      }
+    },
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "subject",
+        "prompt",
+        "outcomes"
+      ],
+      "properties": {
+        "label": {
+          "type": "string",
+          "pattern": "^agent:.+",
+          "maxLength": 50,
+          "description": "Trigger label. Must start with `agent:`. Omit for a schedule-only task."
+        },
+        "subject": {
+          "$ref": "#/$defs/subject"
+        },
+        "query": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Issue search query, with `subject: batch`."
+        },
+        "schedule": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "cron"
+          ],
+          "properties": {
+            "cron": {
+              "type": "string",
+              "pattern": "^\\s*\\S+(\\s+\\S+){4}\\s*$",
+              "description": "Five-field cron, in `timezone`."
+            },
+            "subject": {
+              "$ref": "#/$defs/subject"
+            }
+          }
+        },
+        "prompt": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Path to the prompt file."
+        },
+        "instructions": {
+          "$ref": "#/$defs/textOrPath",
+          "description": "Added after the prompt."
+        },
+        "skills": {
+          "type": "object",
+          "default": {},
+          "description": "Map of skill name to path. A layer removes a skill with `null`.",
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "agent": {
+          "$ref": "#/$defs/agent"
+        },
+        "model": {
+          "$ref": "#/$defs/model"
+        },
+        "runsOn": {
+          "$ref": "#/$defs/runsOn"
+        },
+        "container": {
+          "$ref": "#/$defs/container"
+        },
+        "timeout": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 360,
+          "default": 60,
+          "description": "Minutes for the agent step."
+        },
+        "permission": {
+          "enum": [
+            "read-only",
+            "edit-workspace"
+          ],
+          "default": "read-only"
+        },
+        "checksGate": {
+          "type": "boolean",
+          "default": true,
+          "description": "Checks must pass before a push."
+        },
+        "turns": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1,
+          "description": "Rounds of agent then checks."
+        },
+        "writes": {
+          "$ref": "#/$defs/writes",
+          "default": {}
+        },
+        "outcomes": {
+          "type": "object",
+          "minProperties": 1,
+          "description": "Map of outcome name to the labels it adds or removes.",
+          "additionalProperties": {
+            "$ref": "#/$defs/outcome"
+          }
+        },
+        "planSchema": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Path to a JSON schema of extra plan fields."
+        },
+        "hooks": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "before": {
+              "type": "string",
+              "minLength": 1
+            },
+            "after": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "allowWorkflowChanges": {
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "topLevel": {
+      "type": "object",
+      "properties": {
+        "agent": {
+          "$ref": "#/$defs/agent",
+          "default": "claude"
+        },
+        "model": {
+          "$ref": "#/$defs/model"
+        },
+        "timezone": {
+          "type": "string",
+          "minLength": 1,
+          "default": "UTC",
+          "description": "IANA time zone for schedules."
+        },
+        "runsOn": {
+          "$ref": "#/$defs/runsOn",
+          "default": "ubuntu-latest"
+        },
+        "container": {
+          "$ref": "#/$defs/container"
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "default": [],
+          "description": "Shell commands run after the agent."
+        },
+        "instructions": {
+          "$ref": "#/$defs/textOrPath",
+          "description": "Added to every task's prompt."
+        },
+        "assignee": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9-]+(\\[bot\\])?$"
+        },
+        "operatorIssue": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "throttles": {
+          "type": "object",
+          "additionalProperties": false,
+          "default": {},
+          "properties": {
+            "runsPerDay": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 50
+            },
+            "concurrentRuns": {
+              "oneOf": [
+                {
+                  "const": 1
+                },
+                {
+                  "const": "unlimited"
+                }
+              ],
+              "default": "unlimited"
+            }
+          }
+        },
+        "labels": {
+          "type": "object",
+          "description": "Map of label name to `{color, description}`.",
+          "additionalProperties": {
+            "$ref": "#/$defs/labelSpec"
+          }
+        },
+        "tasks": {
+          "type": "object",
+          "description": "Map of task name to task. A layer removes a task with `null`.",
+          "additionalProperties": {
+            "$ref": "#/$defs/task"
+          }
+        }
+      }
+    }
+  }
+}
