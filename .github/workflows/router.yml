@@ -37,6 +37,7 @@ jobs:
       decision: ${{ steps.route.outputs.decision }}
       task: ${{ steps.route.outputs.task }}
       agent-job: ${{ steps.route.outputs.agent-job }}
+      doctor-agents: ${{ steps.route.outputs.doctor-agents }}
       factory-repository: ${{ steps.factory.outputs.repository }}
       factory-sha: ${{ steps.factory.outputs.sha }}
     steps:
@@ -76,6 +77,51 @@ jobs:
           FACTORY_TOKEN: ${{ secrets.FACTORY_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}
         run: node "$FACTORY_ROOT/dist/router.js"
+
+  # The doctor's agent check, one job per agent the config uses. Each holds only its own agent's credentials, and
+  # no GitHub token. Runs even when the route job's checks failed, so every problem shows in one go.
+  doctor-agent:
+    needs: route
+    if: always() && needs.route.outputs.doctor-agents != '' && needs.route.outputs.doctor-agents != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.route.outputs.doctor-agents) }}
+    env:
+      AGENT: ${{ matrix.agent }}
+    steps:
+      - name: Fetch the factory at the pinned commit
+        env:
+          REPOSITORY: ${{ needs.route.outputs.factory-repository }}
+          SHA: ${{ needs.route.outputs.factory-sha }}
+          SERVER: ${{ github.server_url }}
+        run: |
+          dir="$RUNNER_TEMP/actions-factory"
+          git init -q "$dir"
+          git -C "$dir" fetch -q --depth 1 "$SERVER/$REPOSITORY" "$SHA"
+          git -C "$dir" -c advice.detachedHead=false checkout -q FETCH_HEAD
+          echo "FACTORY_ROOT=$dir" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: Cache the agent CLI
+        if: matrix.cliVersion != 'none'
+        uses: actions/cache@v4
+        with:
+          path: ~/.factory-agents
+          key: factory-agent-${{ matrix.agent }}-${{ matrix.cliVersion }}-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Check the agent
+        env:
+          ANTHROPIC_API_KEY: ${{ matrix.agent == 'claude' && secrets.ANTHROPIC_API_KEY || '' }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ matrix.agent == 'claude' && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
+          OPENAI_API_KEY: ${{ matrix.agent == 'codex' && secrets.OPENAI_API_KEY || '' }}
+          CODEX_ACCESS_TOKEN: ${{ matrix.agent == 'codex' && secrets.CODEX_ACCESS_TOKEN || '' }}
+          COPILOT_GITHUB_TOKEN: ${{ matrix.agent == 'copilot' && secrets.COPILOT_GITHUB_TOKEN || '' }}
+        run: node "$FACTORY_ROOT/dist/agent.js" doctor
 
   # Holds no GitHub token. Only the prepare step reads GitHub, with the default token; each agent round gets
   # only its own agent's credential, and each checks step only FACTORY_CHECK_ENV (§9).

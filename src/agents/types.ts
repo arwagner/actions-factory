@@ -32,4 +32,6 @@ export interface Adapter {
   /** The secrets this adapter reads, by name. The agent step gets only these. */
   credentials: string[];
   run(input: AdapterInput): Promise<AdapterOutput>;
+  /** The doctor's check that the credential works: one tiny prompt. `detail` never holds a secret. */
+  ping(): Promise<{ ok: boolean; detail: string }>;
 }

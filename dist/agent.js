@@ -14847,12 +14847,13 @@ var require__ = __commonJS({
 
 // src/runner/agent-main.ts
 import { spawn as spawn2 } from "node:child_process";
+import { appendFileSync } from "node:fs";
 import { join as join6 } from "node:path";
 
 // src/agents/claude.ts
 import { execFile, spawn } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
@@ -14871,6 +14872,27 @@ function claudeAdapter(options = {}) {
   return {
     name: "claude",
     credentials: CREDENTIALS,
+    async ping() {
+      const env = { ...process.env };
+      for (const name of WITHHELD) delete env[name];
+      const secrets = CREDENTIALS.map((name) => process.env[name]).filter((v) => Boolean(v));
+      const { code, stdout, timedOut } = await runCli(await install(), ["-p", "--output-format", "json", "--max-turns", "1"], {
+        cwd: mkdtempSync(join(tmpdir(), "factory-doctor-")),
+        env,
+        stdin: "Reply with the single word OK.",
+        timeoutMs: 3 * 6e4
+      });
+      if (timedOut) return { ok: false, detail: "Claude Code didn't answer within 3 minutes" };
+      let result;
+      try {
+        result = JSON.parse(stdout.trim().split("\n").pop() ?? "");
+      } catch {
+        result = void 0;
+      }
+      const said = scrubValues(String(result?.result ?? stdout).trim(), secrets).slice(0, 300);
+      if (code !== 0 || !result || result.is_error) return { ok: false, detail: `Claude Code ${CLAUDE_CODE_VERSION} failed: ${said || `exit ${code}`}` };
+      return { ok: true, detail: `Claude Code ${CLAUDE_CODE_VERSION} answered a test prompt` };
+    },
     async run(input) {
       for (const [name, path] of Object.entries(input.skills)) {
         mkdirSync(skillsDir, { recursive: true });
@@ -14956,6 +14978,9 @@ import { dirname, join as join2 } from "node:path";
 var fakeAdapter = {
   name: "fake",
   credentials: [],
+  async ping() {
+    return { ok: true, detail: "the fake agent needs no credential" };
+  },
   async run(input) {
     const dir = join2(input.checkout, ".factory/fake");
     const perTurn = join2(dir, `${input.task}.turn${input.turn}.json`);
@@ -14983,7 +15008,7 @@ var ADAPTERS = { claude: claudeAdapter(), fake: fakeAdapter };
 
 // src/config/fetch.ts
 import { execFile as execFile2 } from "node:child_process";
-import { existsSync as existsSync3, mkdirSync as mkdirSync3, mkdtempSync, renameSync, rmSync } from "node:fs";
+import { existsSync as existsSync3, mkdirSync as mkdirSync3, mkdtempSync as mkdtempSync2, renameSync, rmSync } from "node:fs";
 import { dirname as dirname2, join as join3 } from "node:path";
 import { promisify as promisify2 } from "node:util";
 var run = promisify2(execFile2);
@@ -14992,7 +15017,7 @@ function gitFetcher({ cacheDir, token, baseUrl = "https://github.com" }) {
     const dir = join3(cacheDir, owner, repo, encodeURIComponent(ref));
     if (existsSync3(dir)) return dir;
     mkdirSync3(dirname2(dir), { recursive: true });
-    const work = mkdtempSync(`${dir}.partial-`);
+    const work = mkdtempSync2(`${dir}.partial-`);
     const auth = token ? ["-c", `http.extraHeader=Authorization: Basic ${Buffer.from(`x-access-token:${token}`).toString("base64")}`] : [];
     const git2 = (...args) => run("git", args, { cwd: work });
     try {
@@ -15954,6 +15979,31 @@ function gitHubApi(token, owner, repo, baseUrl = "https://api.github.com") {
     async removeAssignees(issueNumber, logins) {
       await call("DELETE", `/issues/${issueNumber}/assignees`, { assignees: logins });
     },
+    async probeAccess() {
+      const status = async (method, path, body) => {
+        try {
+          const response = await fetch(`${baseUrl}/repos/${owner}/${repo}${path}`, {
+            method,
+            headers: {
+              Authorization: `Bearer ${token}`,
+              Accept: "application/vnd.github+json",
+              "X-GitHub-Api-Version": "2022-11-28",
+              "User-Agent": "actions-factory"
+            },
+            body: body === void 0 ? void 0 : JSON.stringify(body)
+          });
+          return response.status;
+        } catch {
+          return 0;
+        }
+      };
+      return {
+        read: await status("GET", ""),
+        contents: await status("POST", "/git/refs", { ref: "refs/heads/factory-doctor-probe", sha: "0".repeat(40) }),
+        issues: await status("POST", "/issues", { title: "" }),
+        pullRequests: await status("POST", "/pulls", { title: "factory doctor probe", head: "factory-doctor-no-such-branch", base: "factory-doctor-no-such-branch" })
+      };
+    },
     async requestReviewers(pullNumber, logins) {
       await call("POST", `/pulls/${pullNumber}/requested_reviewers`, { reviewers: logins }, [422]);
     }
@@ -16273,6 +16323,40 @@ function saveState(io, state) {
   writeFileSync3(files(io.workDir).state, JSON.stringify(state, null, 2));
 }
 
+// src/router/doctor.ts
+function renderChecks(checks) {
+  const rows = checks.map((c) => `| ${c.ok ? "\u2705" : "\u274C"} | ${c.name} | ${c.detail}${c.fix ? `<br>**Fix:** ${c.fix}` : ""} |`);
+  return ["| | Check | Result |", "|---|---|---|", ...rows].join("\n");
+}
+
+// src/runner/doctor-agent.ts
+async function doctorAgent(input) {
+  const adapter = input.adapters[input.agent];
+  const checks = [];
+  if (!adapter) {
+    checks.push({ name: "Agent", ok: false, detail: `this factory release has no ${input.agent} adapter`, fix: "Use one of the agents in the config reference." });
+  } else {
+    const names = adapter.credentials;
+    const set = names.filter((n) => input.env[n]);
+    if (names.length > 0 && set.length === 0) {
+      const which = names.map((n) => `\`${n}\``).join(" or ");
+      checks.push({ name: "Credential", ok: false, detail: "no credential secret is set", fix: `Set ${which} as a repo secret.` });
+    } else {
+      if (names.length > 0) checks.push({ name: "Credential", ok: true, detail: `${set.map((n) => `\`${n}\``).join(", ")} set` });
+      const ping = await adapter.ping();
+      checks.push({
+        name: "Test prompt",
+        ok: ping.ok,
+        detail: ping.detail,
+        ...ping.ok ? {} : { fix: "Check that the credential is valid and has quota, then update the secret." }
+      });
+    }
+  }
+  const ok = checks.every((c) => c.ok);
+  input.summary([`### actions-factory doctor: \`${input.agent}\` agent ${ok ? "works" : "has a problem"}`, "", renderChecks(checks), ""].join("\n"));
+  return ok;
+}
+
 // src/runner/agent-main.ts
 async function main() {
   const env = (name) => process.env[name] || void 0;
@@ -16282,6 +16366,17 @@ async function main() {
     return value;
   };
   const [step, n] = process.argv.slice(2);
+  if (step === "doctor") {
+    const ok = await doctorAgent({
+      agent: required("AGENT"),
+      adapters: ADAPTERS,
+      env: process.env,
+      summary: (markdown) => appendFileSync(required("GITHUB_STEP_SUMMARY"), `${markdown}
+`)
+    });
+    if (!ok) process.exitCode = 1;
+    return;
+  }
   const decision = JSON.parse(required("DECISION"));
   if (decision.kind !== "run") return;
   const [owner, repo] = required("GITHUB_REPOSITORY").split("/");

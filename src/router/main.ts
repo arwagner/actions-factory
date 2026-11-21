@@ -27,6 +27,10 @@ async function main(): Promise<void> {
     runId: Number(env("GITHUB_RUN_ID")) || undefined,
     runUrl: `${env("GITHUB_SERVER_URL")}/${owner}/${repo}/actions/runs/${env("GITHUB_RUN_ID")}`,
     summary: (markdown) => appendFileSync(required("GITHUB_STEP_SUMMARY"), `${markdown}\n`),
+    setFailed: (message) => {
+      console.log(`::error title=actions-factory doctor::${message}`);
+      process.exitCode = 1;
+    },
     setOutput: (name, value) => {
       const delimiter = `EOF_${randomUUID()}`;
       appendFileSync(required("GITHUB_OUTPUT"), `${name}<<${delimiter}\n${value}\n${delimiter}\n`);
