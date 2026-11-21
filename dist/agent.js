@@ -15828,7 +15828,13 @@ function gitHubApi(token, owner, repo, baseUrl = "https://api.github.com") {
     },
     async getPull(number) {
       const pull = await call("GET", `/pulls/${number}`);
-      return { head: pull.head.ref, mergeable: pull.mergeable === true && pull.mergeable_state === "clean" };
+      const checks = await call("GET", `/commits/${pull.head.sha}/check-runs?per_page=100`);
+      const running = checks.check_runs.some((c) => c.status !== "completed");
+      return {
+        head: pull.head.ref,
+        mergeable: pull.mergeable === true && pull.mergeable_state === "clean",
+        pending: pull.mergeable === null || pull.mergeable_state === "unknown" || running
+      };
     },
     async createPull(pull) {
       return (await call("POST", "/pulls", pull)).number;
@@ -15973,6 +15979,17 @@ function buildPrompt(input) {
       ].join("\n")
     );
   }
+  if (input.checks && input.checks.length > 0) {
+    parts.push(
+      [
+        "## Checks",
+        "",
+        "The factory runs these after you, in this order, and pushes only if they pass. Run them yourself before you finish:",
+        "",
+        ...input.checks.map((c) => `- \`${c}\``)
+      ].join("\n")
+    );
+  }
   if (input.checkFailure) {
     parts.push(["## The checks failed", "", "Your last changes failed the repo's checks. Fix them. Output:", "", "```", input.checkFailure, "```"].join("\n"));
   }
@@ -16016,11 +16033,13 @@ async function prepare(io) {
     instructions: io.task.instructions,
     items,
     outcomes: Object.keys(io.task.outcomes),
+    checks: io.task.checks,
     planFile: f.plan,
     planSchemaFile: f.planSchema
   };
   writeFileSync3(f.prompt, buildPrompt(promptInput));
-  saveState(io, { promptInput, batchNumbers, agentStatus: "not-run", turnsRun: 0 });
+  const base = (await git("git", ["rev-parse", "HEAD"], { cwd: io.checkout })).stdout.trim();
+  saveState(io, { base, promptInput, batchNumbers, agentStatus: "not-run", turnsRun: 0 });
   if (io.task.hooks?.before) {
     await io.runHook(io.task.hooks.before, { FACTORY_TASK: io.task.name, FACTORY_WORK_DIR: io.workDir });
   }
@@ -16088,11 +16107,11 @@ async function handoff(io) {
   const run3 = (...args) => git("git", ["-c", "user.name=actions-factory", "-c", "user.email=actions-factory@users.noreply.github.com", ...args], {
     cwd: io.checkout
   });
-  const base = (await run3("rev-parse", "HEAD")).stdout.trim();
+  const base = state?.base ?? (await run3("rev-parse", "HEAD")).stdout.trim();
   await run3("switch", "-q", "-c", WORK_REF);
   await run3("add", "-A");
-  if ((await run3("status", "--porcelain")).stdout.trim() === "") return;
-  await run3("commit", "-q", "-m", `actions-factory: ${io.task.name}`);
+  if ((await run3("status", "--porcelain")).stdout.trim() !== "") await run3("commit", "-q", "-m", `actions-factory: ${io.task.name}`);
+  if ((await run3("rev-parse", "HEAD")).stdout.trim() === base) return;
   await run3("bundle", "create", join5(f.handoff, "work.bundle"), `${base}..${WORK_REF}`);
 }
 function addUsage(a, b) {

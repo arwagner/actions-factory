@@ -15697,7 +15697,13 @@ function gitHubApi(token, owner, repo, baseUrl = "https://api.github.com") {
     },
     async getPull(number) {
       const pull = await call("GET", `/pulls/${number}`);
-      return { head: pull.head.ref, mergeable: pull.mergeable === true && pull.mergeable_state === "clean" };
+      const checks = await call("GET", `/commits/${pull.head.sha}/check-runs?per_page=100`);
+      const running = checks.check_runs.some((c) => c.status !== "completed");
+      return {
+        head: pull.head.ref,
+        mergeable: pull.mergeable === true && pull.mergeable_state === "clean",
+        pending: pull.mergeable === null || pull.mergeable_state === "unknown" || running
+      };
     },
     async createPull(pull) {
       return (await call("POST", "/pulls", pull)).number;
@@ -15902,11 +15908,7 @@ ${errors.map((e) => `- \`${e.path || "plan"}\`: ${e.message}`).join("\n")}`);
   for (const issue of plan.createIssues ?? []) {
     await io.api.createIssue(issue);
   }
-  if (plan.merge === true && number !== void 0) {
-    const pull = await io.api.getPull(number);
-    if (!pull.mergeable) throw new Refusal("GitHub can't merge this pull request yet (conflicts, failing checks or required reviews).");
-    await io.api.mergePull(number);
-  }
+  if (plan.merge === true && number !== void 0) await mergeWhenReady(io, number);
   await runAfterHook(io, {
     FACTORY_OUTCOME: plan.outcome,
     FACTORY_PLAN: JSON.stringify(plan),
@@ -15917,6 +15919,21 @@ ${errors.map((e) => `- \`${e.path || "plan"}\`: ${e.message}`).join("\n")}`);
 }
 async function runAfterHook(io, env) {
   if (io.task.hooks?.after) await io.runHook(io.task.hooks.after, { FACTORY_TASK: io.taskName, ...env });
+}
+var MERGE_POLL_MS = 3e4;
+var MERGE_WAIT_MS = 30 * 6e4;
+async function mergeWhenReady(io, number) {
+  const sleep = io.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+  let pull = await io.api.getPull(number);
+  for (let waited = 0; pull.pending && !pull.mergeable && waited < MERGE_WAIT_MS; waited += MERGE_POLL_MS) {
+    await sleep(MERGE_POLL_MS);
+    pull = await io.api.getPull(number);
+  }
+  if (!pull.mergeable) {
+    const why = pull.pending ? "its checks were still running after 30 minutes" : "it has conflicts, failing checks or missing reviews";
+    throw new Refusal(`GitHub can't merge this pull request: ${why}.`);
+  }
+  await io.api.mergePull(number);
 }
 async function pushChanges(io) {
   const files = await io.git.changedFiles();

@@ -14930,7 +14930,13 @@ function gitHubApi(token, owner, repo, baseUrl = "https://api.github.com") {
     },
     async getPull(number) {
       const pull = await call("GET", `/pulls/${number}`);
-      return { head: pull.head.ref, mergeable: pull.mergeable === true && pull.mergeable_state === "clean" };
+      const checks = await call("GET", `/commits/${pull.head.sha}/check-runs?per_page=100`);
+      const running = checks.check_runs.some((c) => c.status !== "completed");
+      return {
+        head: pull.head.ref,
+        mergeable: pull.mergeable === true && pull.mergeable_state === "clean",
+        pending: pull.mergeable === null || pull.mergeable_state === "unknown" || running
+      };
     },
     async createPull(pull) {
       return (await call("POST", "/pulls", pull)).number;

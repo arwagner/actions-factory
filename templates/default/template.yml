@@ -1,0 +1,69 @@
+name: default
+description: Explore, implement, review and merge. The full journey from issue to merged pull request, every task started by a label.
+schemaVersions: [1]
+
+labels:
+  needs-a-human: { color: 'd93f0b', description: Waits on a person to decide something }
+  blocked: { color: '5319e7', description: Waits on something outside this repo }
+
+tasks:
+  explore:
+    label: agent:explore
+    subject: batch
+    query: label:agent:explore
+    prompt: tasks/explore/prompt.md
+    permission: read-only
+    planSchema: tasks/explore/plan-schema.json
+    writes:
+      comment: true
+      closeIssue: true
+    outcomes:
+      easy-call: { addLabels: [agent:implement], removeLabels: [agent:explore] }
+      needs-a-human: { addLabels: [needs-a-human], removeLabels: [agent:explore], waitsOnPerson: true }
+      blocked: { addLabels: [blocked], removeLabels: [agent:explore], waitsOnPerson: true }
+      duplicate: { removeLabels: [agent:explore] }
+
+  implement:
+    label: agent:implement
+    subject: issue
+    prompt: tasks/implement/prompt.md
+    permission: edit-workspace
+    writes:
+      comment: true
+      push: true
+      pullRequest: { draft: true }
+    outcomes:
+      done: {}
+      needs-a-human: { addLabels: [needs-a-human], waitsOnPerson: true }
+    hooks:
+      after: hooks/label-pr.sh
+
+  review:
+    label: agent:review
+    subject: pr
+    prompt: tasks/review/prompt.md
+    permission: edit-workspace
+    skills:
+      code-review: skills/code-review
+      clarify: skills/clarify
+    writes:
+      comment: true
+      push: true
+    outcomes:
+      ready: { waitsOnPerson: true }
+      changes-requested: { waitsOnPerson: true }
+    hooks:
+      after: hooks/mark-ready.sh
+
+  merge:
+    label: agent:merge
+    subject: pr
+    prompt: tasks/merge/prompt.md
+    permission: edit-workspace
+    turns: 3
+    writes:
+      comment: true
+      push: true
+      merge: true
+    outcomes:
+      merged: {}

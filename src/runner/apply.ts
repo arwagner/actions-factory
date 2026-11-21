@@ -29,6 +29,8 @@ export interface ApplyIO {
   runId: string;
   runUrl: string;
   runHook: (path: string, env: Record<string, string>) => Promise<void>;
+  /** Waits between polls while a merge waits on checks. Injected so tests don't wait. */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 export type ApplyResult = { ok: true; outcome: string } | { ok: false; reason: string };
@@ -93,11 +95,7 @@ async function applyWrites(io: ApplyIO): Promise<string> {
   for (const issue of (plan.createIssues ?? []) as Array<{ title: string; body: string; labels?: string[] }>) {
     await io.api.createIssue(issue);
   }
-  if (plan.merge === true && number !== undefined) {
-    const pull = await io.api.getPull(number);
-    if (!pull.mergeable) throw new Refusal("GitHub can't merge this pull request yet (conflicts, failing checks or required reviews).");
-    await io.api.mergePull(number);
-  }
+  if (plan.merge === true && number !== undefined) await mergeWhenReady(io, number);
 
   await runAfterHook(io, {
     FACTORY_OUTCOME: plan.outcome as string,
@@ -111,6 +109,24 @@ async function applyWrites(io: ApplyIO): Promise<string> {
 /** The `after` hook runs last, once every write is made. */
 async function runAfterHook(io: ApplyIO, env: Record<string, string>): Promise<void> {
   if (io.task.hooks?.after) await io.runHook(io.task.hooks.after, { FACTORY_TASK: io.taskName, ...env });
+}
+
+const MERGE_POLL_MS = 30_000;
+const MERGE_WAIT_MS = 30 * 60_000;
+
+/** Waits for GitHub's checks on the head (up to 30 minutes), then merges with a merge commit, or parks. */
+async function mergeWhenReady(io: ApplyIO, number: number): Promise<void> {
+  const sleep = io.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
+  let pull = await io.api.getPull(number);
+  for (let waited = 0; pull.pending && !pull.mergeable && waited < MERGE_WAIT_MS; waited += MERGE_POLL_MS) {
+    await sleep(MERGE_POLL_MS);
+    pull = await io.api.getPull(number);
+  }
+  if (!pull.mergeable) {
+    const why = pull.pending ? "its checks were still running after 30 minutes" : "it has conflicts, failing checks or missing reviews";
+    throw new Refusal(`GitHub can't merge this pull request: ${why}.`);
+  }
+  await io.api.mergePull(number);
 }
 
 /** Pushes the agent's work, if any, to a branch the factory owns. Returns the branch, or undefined if nothing changed. */

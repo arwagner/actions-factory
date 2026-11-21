@@ -52,6 +52,8 @@ export interface AgentJobIO {
 }
 
 interface State {
+  /** The commit the job started from; the handed-over work is everything since. */
+  base?: string;
   promptInput: PromptInput;
   batchNumbers?: number[];
   agentStatus: HandoffMeta["agentStatus"] | "not-run";
@@ -83,11 +85,13 @@ export async function prepare(io: AgentJobIO): Promise<void> {
     instructions: io.task.instructions,
     items,
     outcomes: Object.keys(io.task.outcomes),
+    checks: io.task.checks,
     planFile: f.plan,
     planSchemaFile: f.planSchema,
   };
   writeFileSync(f.prompt, buildPrompt(promptInput));
-  saveState(io, { promptInput, batchNumbers, agentStatus: "not-run", turnsRun: 0 });
+  const base = (await git("git", ["rev-parse", "HEAD"], { cwd: io.checkout })).stdout.trim();
+  saveState(io, { base, promptInput, batchNumbers, agentStatus: "not-run", turnsRun: 0 });
   if (io.task.hooks?.before) {
     await io.runHook(io.task.hooks.before, { FACTORY_TASK: io.task.name, FACTORY_WORK_DIR: io.workDir });
   }
@@ -166,11 +170,11 @@ export async function handoff(io: AgentJobIO): Promise<void> {
     git("git", ["-c", "user.name=actions-factory", "-c", "user.email=actions-factory@users.noreply.github.com", ...args], {
       cwd: io.checkout,
     });
-  const base = (await run("rev-parse", "HEAD")).stdout.trim();
+  const base = state?.base ?? (await run("rev-parse", "HEAD")).stdout.trim();
   await run("switch", "-q", "-c", WORK_REF);
   await run("add", "-A");
-  if ((await run("status", "--porcelain")).stdout.trim() === "") return;
-  await run("commit", "-q", "-m", `actions-factory: ${io.task.name}`);
+  if ((await run("status", "--porcelain")).stdout.trim() !== "") await run("commit", "-q", "-m", `actions-factory: ${io.task.name}`);
+  if ((await run("rev-parse", "HEAD")).stdout.trim() === base) return;
   await run("bundle", "create", join(f.handoff, "work.bundle"), `${base}..${WORK_REF}`);
 }
 
