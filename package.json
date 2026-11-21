@@ -7,7 +7,7 @@
     "node": ">=24"
   },
   "scripts": {
-    "build": "esbuild index=src/index.ts router=src/router/main.ts --bundle --platform=node --target=node24 --format=esm --outdir=dist --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\"",
+    "build": "esbuild index=src/index.ts router=src/router/main.ts apply=src/runner/apply-main.ts --bundle --platform=node --target=node24 --format=esm --outdir=dist --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\"",
     "lint": "eslint . && tsc --noEmit",
     "test": "vitest run"
   },
