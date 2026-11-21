@@ -9,15 +9,15 @@ export interface RunCounts {
 }
 
 /**
- * Counts today's factory task runs from the repo's run list: runs titled `factory · agent:… · #n` by the stub
- * that weren't skipped (other labels leave skipped runs).
+ * Counts today's factory task runs from the repo's run list: runs the stub titled `factory · agent:… · #n` or
+ * `factory · schedule:<task>` that weren't skipped (other labels leave skipped runs).
  */
 export function countRuns(
   runs: Array<{ id: number; title: string; conclusion: string | null }>,
   subject: number | undefined,
   currentRunId: number | undefined,
 ): RunCounts {
-  const tasks = runs.filter((r) => r.id !== currentRunId && r.conclusion !== "skipped" && /^factory · agent:/.test(r.title));
+  const tasks = runs.filter((r) => r.id !== currentRunId && r.conclusion !== "skipped" && /^factory · (agent|schedule):/.test(r.title));
   const subjectToday = subject === undefined ? 0 : tasks.filter((r) => r.title.endsWith(` · #${subject}`)).length;
   return { today: tasks.length, subjectToday };
 }

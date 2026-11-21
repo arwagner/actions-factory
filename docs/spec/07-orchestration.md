@@ -6,7 +6,9 @@ There is no server and no stored state. Everything comes from GitHub events, lab
 
 ## The label is the queue
 
-Every run takes its trigger label off when it starts. An open item that still carries a trigger label is therefore work that hasn't started: either it was held back by a limit, or its event was dropped. On each 15-minute tick, the router sweeps these items, oldest first, within the limits. Items carrying `agent:blocked` are skipped.
+Every run takes its trigger label off when it starts. An open item that still carries a trigger label is therefore work that hasn't started: either it was held back by a limit, or its event was dropped. On each 15-minute tick, the router sweeps these items, oldest first, within the limits. Items carrying `agent:blocked` are skipped, and so are items with a factory run still queued or going.
+
+The tick starts each run with a `repository_dispatch` of type `factory-run` (`{task, trigger, number?}`), sent with `FACTORY_TOKEN`, so every run gets its own title and per-subject queue. A swept item's run is routed as the label event it stands for: the person who added the label (from the issue's events) must have write access, and an item that was closed or lost the label meanwhile starts nothing.
 
 ## Limits
 
@@ -20,9 +22,11 @@ Every run takes its trigger label off when it starts. An open item that still ca
 ## Schedules
 
 - The router evaluates each task's five-field cron in the repo's `timezone` (IANA, default UTC) on every tick.
-- It finds the last tick it handled from the previous scheduled run, through the API.
-- After missed or dropped ticks, each task runs **once**, for the latest missed slot.
-- A scheduled run's refusals and failures go on its `schedule.subject` if it has one, and otherwise to the run summary and `operatorIssue`.
+- It finds the last tick it handled from the previous successful or still-running scheduled run, through the API. Each tick handles the slots between that run's creation and its own.
+- After missed or dropped ticks, each task runs **once**, for the latest missed slot. Slots more than 31 days old are dropped.
+- Scheduled runs count toward `runsPerDay`. A slot that comes due over the limit is skipped and shown in the tick's summary.
+- `schedule.subject` is the number of the issue or PR the scheduled run is about. It's required for `issue` and `pr` tasks.
+- A scheduled run's refusals and failures go on its `schedule.subject` if it has one, and otherwise to the run summary and `operatorIssue`, once a day per kind of refusal.
 
 ## implement-spec queue
 

@@ -25,6 +25,12 @@ describe("the stub", () => {
     });
   });
 
+  it("titles a tick's dispatched runs by their trigger and item, as label runs are, so the router can count them", () => {
+    expect(stub["run-name"]).toContain("github.event.client_payload.trigger");
+    expect(stub["run-name"]).toContain("github.event.client_payload.number");
+    expect(stub["run-name"]).toContain("'tick'");
+  });
+
   it("calls the router at the moving major tag", () => {
     expect(job.uses).toBe("arwagner/actions-factory/.github/workflows/router.yml@v1");
   });

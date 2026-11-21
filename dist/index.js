@@ -2796,11 +2796,11 @@ var require_validate = __commonJS({
         jsonPointer = $data;
         data = names_1.default.rootData;
       } else {
-        const matches = RELATIVE_JSON_POINTER.exec($data);
-        if (!matches)
+        const matches2 = RELATIVE_JSON_POINTER.exec($data);
+        if (!matches2)
           throw new Error(`Invalid JSON-pointer: ${$data}`);
-        const up = +matches[1];
-        jsonPointer = matches[2];
+        const up = +matches2[1];
+        jsonPointer = matches2[2];
         if (jsonPointer === "#") {
           if (up >= dataLevel)
             throw new Error(errorMsg("property/index", up));
@@ -3719,11 +3719,11 @@ var require_schemes = __commonJS({
         urnComponent.error = "URN can not be parsed";
         return urnComponent;
       }
-      const matches = urnComponent.path.match(URN_REG);
-      if (matches && matches[0] === urnComponent.path) {
+      const matches2 = urnComponent.path.match(URN_REG);
+      if (matches2 && matches2[0] === urnComponent.path) {
         const scheme = options.scheme || urnComponent.scheme || "urn";
-        urnComponent.nid = matches[1].toLowerCase();
-        urnComponent.nss = matches[2];
+        urnComponent.nid = matches2[1].toLowerCase();
+        urnComponent.nss = matches2[2];
         const urnScheme = `${scheme}:${options.nid || urnComponent.nid}`;
         const schemeHandler = getSchemeHandler(urnScheme);
         urnComponent.path = void 0;
@@ -4044,8 +4044,8 @@ var require_fast_uri = __commonJS({
     var URI_PARSE = /^(?:([^#/:?]+):)?(?:\/\/((?:([^#/?@]*)@)?(\[[^#/?\]]+\]|[^#/:?]*)(?::(\d*))?))?([^#?]*)(?:\?([^#]*))?(?:#((?:.|[\n\r])*))?/u;
     var AUTHORITY_PREFIX = /^(?:[^#/:?]+:)?\/\/([^/?#]*)/;
     var AUTHORITY_INTRODUCER_REGION = /^(?:[^#/:?]+:)?([/\\\t\n\r]*)/;
-    function getParseError(parsed, matches) {
-      if (matches[2] !== void 0 && parsed.path && parsed.path[0] !== "/") {
+    function getParseError(parsed, matches2) {
+      if (matches2[2] !== void 0 && parsed.path && parsed.path[0] !== "/") {
         return 'URI path must start with "/" when authority is present.';
       }
       if (typeof parsed.port === "number" && (parsed.port < 0 || parsed.port > 65535)) {
@@ -4067,9 +4067,9 @@ var require_fast_uri = __commonJS({
     function isIPLiteral(host) {
       return host[0] === "[" && host[host.length - 1] === "]";
     }
-    function hasMalformedComponentPercentEncoding(matches) {
-      const host = matches[4];
-      return hasMalformedPercentEncoding(matches[3]) || host !== void 0 && !isIPLiteral(host) && hasMalformedPercentEncoding(host) || hasMalformedPercentEncoding(matches[6]) || hasMalformedPercentEncoding(matches[7]) || hasMalformedPercentEncoding(matches[8]);
+    function hasMalformedComponentPercentEncoding(matches2) {
+      const host = matches2[4];
+      return hasMalformedPercentEncoding(matches2[3]) || host !== void 0 && !isIPLiteral(host) && hasMalformedPercentEncoding(host) || hasMalformedPercentEncoding(matches2[6]) || hasMalformedPercentEncoding(matches2[7]) || hasMalformedPercentEncoding(matches2[8]);
     }
     function canonicalizeHost(parsed, options, schemeHandler, isIP) {
       if (hasForbiddenDomainHost(parsed, options, schemeHandler, isIP)) {
@@ -4144,15 +4144,15 @@ var require_fast_uri = __commonJS({
           }
         }
       }
-      const matches = uri.match(URI_PARSE);
-      if (matches) {
-        parsed.scheme = matches[1];
-        parsed.userinfo = matches[3];
-        parsed.host = matches[4];
-        parsed.port = parseInt(matches[5], 10);
-        parsed.path = matches[6] || "";
-        parsed.query = matches[7];
-        parsed.fragment = matches[8];
+      const matches2 = uri.match(URI_PARSE);
+      if (matches2) {
+        parsed.scheme = matches2[1];
+        parsed.userinfo = matches2[3];
+        parsed.host = matches2[4];
+        parsed.port = parseInt(matches2[5], 10);
+        parsed.path = matches2[6] || "";
+        parsed.query = matches2[7];
+        parsed.fragment = matches2[8];
         if (parsed.scheme !== void 0) {
           if (VALID_SCHEME.test(parsed.scheme)) {
             parsed.scheme = parsed.scheme.toLowerCase();
@@ -4161,14 +4161,14 @@ var require_fast_uri = __commonJS({
             malformedScheme = true;
           }
         }
-        malformedPercentEncoding = hasMalformedComponentPercentEncoding(matches);
+        malformedPercentEncoding = hasMalformedComponentPercentEncoding(matches2);
         if (malformedPercentEncoding) {
           parsed.error = parsed.error || "URI contains malformed percent-encoding.";
         }
         if (isNaN(parsed.port)) {
-          parsed.port = matches[5];
+          parsed.port = matches2[5];
         }
-        const parseError = getParseError(parsed, matches);
+        const parseError = getParseError(parsed, matches2);
         if (parseError !== void 0) {
           parsed.error = parsed.error || parseError;
           malformedAuthorityOrPort = true;
@@ -15045,7 +15045,9 @@ var defs_schema_default = {
               description: "Five-field cron, in `timezone`."
             },
             subject: {
-              $ref: "#/$defs/subject"
+              type: "integer",
+              minimum: 1,
+              description: "The issue or PR a scheduled run is about, and where its refusals and failures go."
             }
           }
         },
@@ -15262,6 +15264,90 @@ var template_schema_default = {
   unevaluatedProperties: false
 };
 
+// src/router/cron.ts
+var MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+var DAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+var FIELDS = [
+  { name: "minute", min: 0, max: 59 },
+  { name: "hour", min: 0, max: 23 },
+  { name: "day of month", min: 1, max: 31 },
+  { name: "month", min: 1, max: 12, names: MONTHS, offset: 1 },
+  { name: "day of week", min: 0, max: 7, names: DAYS, offset: 0 }
+];
+function parseCron(expression) {
+  const parts2 = expression.trim().split(/\s+/);
+  if (parts2.length !== 5) throw new Error(`a cron needs five fields, not ${parts2.length}: ${expression}`);
+  const sets = parts2.map((part, i) => parseField(part, FIELDS[i]));
+  const dayOfWeek = new Set([...sets[4]].map((d) => d % 7));
+  return {
+    minute: sets[0],
+    hour: sets[1],
+    dayOfMonth: sets[2],
+    month: sets[3],
+    dayOfWeek,
+    domRestricted: !parts2[2].startsWith("*"),
+    dowRestricted: !parts2[4].startsWith("*")
+  };
+}
+function parseField(part, field) {
+  const values = /* @__PURE__ */ new Set();
+  const value = (text) => {
+    const lower = text.toLowerCase();
+    const named = "names" in field ? field.names.indexOf(lower) + field.offset : -1;
+    const n = named >= field.min ? named : /^\d+$/.test(text) ? Number(text) : Number.NaN;
+    if (!(n >= field.min && n <= field.max)) throw new Error(`${text} isn't a valid ${field.name}`);
+    return n;
+  };
+  for (const item of part.split(",")) {
+    const [range, stepText] = item.split("/");
+    const step = stepText === void 0 ? 1 : Number(stepText);
+    if (!Number.isInteger(step) || step < 1) throw new Error(`${item} has a bad step`);
+    let [from, to] = [field.min, field.max];
+    if (range !== "*") {
+      const [a, b] = range.split("-");
+      from = value(a);
+      to = b === void 0 ? stepText === void 0 ? from : field.max : value(b);
+      if (to < from) throw new Error(`${range} runs backwards`);
+    }
+    for (let n = from; n <= to; n += step) values.add(n);
+  }
+  return values;
+}
+function matches(cron, t) {
+  if (!cron.minute.has(t.minute) || !cron.hour.has(t.hour) || !cron.month.has(t.month)) return false;
+  const dom = cron.dayOfMonth.has(t.day);
+  const dow = cron.dayOfWeek.has(t.weekday);
+  if (cron.domRestricted && cron.dowRestricted) return dom || dow;
+  return dom && dow;
+}
+var MINUTE = 6e4;
+var LOOKBACK_MS = 31 * 24 * 60 * MINUTE;
+function latestSlot(cron, timeZone, after, upTo) {
+  const format = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+    hour: "numeric",
+    minute: "numeric",
+    weekday: "short",
+    hourCycle: "h23"
+  });
+  const floor = Math.max(after.getTime(), upTo.getTime() - LOOKBACK_MS);
+  for (let t = Math.floor(upTo.getTime() / MINUTE) * MINUTE; t > floor; t -= MINUTE) {
+    const p = Object.fromEntries(format.formatToParts(new Date(t)).map((x) => [x.type, x.value]));
+    const local = {
+      minute: Number(p.minute),
+      hour: Number(p.hour),
+      day: Number(p.day),
+      month: Number(p.month),
+      weekday: DAYS.indexOf(p.weekday.toLowerCase())
+    };
+    if (matches(cron, local)) return new Date(t);
+  }
+  return void 0;
+}
+
 // src/config/rules.ts
 var MERGE_LABEL = "agent:merge";
 var MERGE_BY_PERSON = `${MERGE_LABEL} is added only by a person`;
@@ -15274,6 +15360,16 @@ function checkHardRules(config) {
     const at = (field) => `tasks.${name}.${field}`;
     if (!task.label && !task.schedule) {
       errors.push({ path: `tasks.${name}`, message: "needs a label or a schedule to ever run" });
+    }
+    if (task.schedule) {
+      try {
+        parseCron(task.schedule.cron);
+      } catch (error) {
+        errors.push({ path: at("schedule.cron"), message: error.message });
+      }
+      if ((task.subject === "issue" || task.subject === "pr") && task.schedule.subject === void 0) {
+        errors.push({ path: at("schedule.subject"), message: `a scheduled ${task.subject} task needs the number of the ${task.subject === "pr" ? "pull request" : "issue"} it's about` });
+      }
     }
     if (task.query !== void 0 && task.subject !== "batch") {
       errors.push({ path: at("query"), message: "allowed only with subject: batch" });
@@ -15689,6 +15785,8 @@ function route(input) {
       const blocked = blockingRefusal(input);
       return blocked ? { kind: "refuse", ...blocked, warnings } : { kind: "sweep", warnings };
     }
+    case "repository_dispatch":
+      return routeScheduled(input, warnings);
     default:
       return { kind: "ignore", reason: `${input.event.name} events start nothing`, warnings };
   }
@@ -15717,6 +15815,19 @@ function routeLabel(input, warnings) {
     return refuse("wrong-subject", message, item);
   }
   return { kind: "run", task: name, label, subject, actor: payload.sender.login, warnings };
+}
+function routeScheduled(input, warnings) {
+  const payload = input.event.payload;
+  if (payload.action !== "factory-run") return { kind: "ignore", reason: `repository_dispatch ${payload.action} starts nothing`, warnings };
+  const name = String(payload.client_payload?.task ?? "");
+  const tasks = input.config.config.tasks ?? {};
+  const task = input.config.ok ? tasks[name] : void 0;
+  const origin = task?.schedule?.subject;
+  const blocked = blockingRefusal(input);
+  if (blocked) return { kind: "refuse", ...blocked, subject: origin ? { kind: "issue", number: origin } : void 0, warnings };
+  if (!task?.schedule) return { kind: "ignore", reason: `no scheduled task is named ${name || "(none)"}`, warnings };
+  const subject = task.subject === "issue" || task.subject === "pr" ? { kind: task.subject, number: origin } : task.subject === "batch" ? { kind: "batch", query: task.query ?? "", origin } : { kind: "repo", origin };
+  return { kind: "run", task: name, label: `schedule:${name}`, subject, actor: payload.sender?.login ?? "", warnings };
 }
 function blockingRefusal({ context, config }) {
   if (!context.hasFactoryToken) {
@@ -15834,7 +15945,31 @@ function gitHubApi(token, owner, repo, baseUrl = "https://api.github.com") {
     },
     async getIssue(issueNumber) {
       const issue = await call("GET", `/issues/${issueNumber}`);
-      return { title: issue.title, body: issue.body ?? "", isPullRequest: issue.pull_request !== void 0 };
+      return {
+        title: issue.title,
+        body: issue.body ?? "",
+        isPullRequest: issue.pull_request !== void 0,
+        open: issue.state === "open",
+        labels: issue.labels.map((l) => l.name)
+      };
+    },
+    async listOpenLabeled(label) {
+      const items = [];
+      for (let page = 1; page <= 10; page++) {
+        const batch = await call("GET", `/issues?state=open&labels=${enc(label)}&sort=created&direction=asc&per_page=100&page=${page}`);
+        items.push(...batch.map((i) => ({ number: i.number, labels: i.labels.map((l) => l.name) })));
+        if (batch.length < 100) break;
+      }
+      return items;
+    },
+    async labeler(issueNumber, label) {
+      let actor;
+      for (let page = 1; page <= 10; page++) {
+        const batch = await call("GET", `/issues/${issueNumber}/events?per_page=100&page=${page}`);
+        for (const e of batch) if (e.event === "labeled" && e.label?.name === label) actor = e.actor?.login;
+        if (batch.length < 100) break;
+      }
+      return actor;
     },
     async searchIssues(query) {
       const q = encodeURIComponent(`repo:${owner}/${repo} is:issue is:open ${query}`);
@@ -15861,6 +15996,8 @@ function gitHubApi(token, owner, repo, baseUrl = "https://api.github.com") {
       const running = checks.check_runs.some((c) => c.status !== "completed");
       return {
         head: pull.head.ref,
+        headRepo: pull.head.repo?.full_name ?? null,
+        baseRepo: pull.base.repo.full_name,
         mergeable: pull.mergeable === true && pull.mergeable_state === "clean",
         pending: pull.mergeable === null || pull.mergeable_state === "unknown" || running
       };
@@ -15875,10 +16012,17 @@ function gitHubApi(token, owner, repo, baseUrl = "https://api.github.com") {
       const runs = [];
       for (let page = 1; page <= 10; page++) {
         const batch = await call("GET", `/actions/runs?per_page=100&page=${page}&created=${enc(`>=${since}`)}`);
-        runs.push(...batch.workflow_runs.map((r) => ({ id: r.id, title: r.display_title, conclusion: r.conclusion })));
+        runs.push(...batch.workflow_runs.map((r) => ({ id: r.id, title: r.display_title, status: r.status, conclusion: r.conclusion })));
         if (batch.workflow_runs.length < 100) break;
       }
       return runs;
+    },
+    async listTicks() {
+      const batch = await call("GET", "/actions/runs?event=schedule&per_page=100");
+      return batch.workflow_runs.filter((r) => r.display_title === "factory \xB7 tick").map((r) => ({ id: r.id, createdAt: r.created_at, conclusion: r.conclusion }));
+    },
+    async dispatch(eventType, payload) {
+      await call("POST", "/dispatches", { event_type: eventType, client_payload: payload });
     },
     async addAssignees(issueNumber, logins) {
       await call("POST", `/issues/${issueNumber}/assignees`, { assignees: logins });
@@ -16006,7 +16150,7 @@ var CLI_VERSIONS = {
 // src/router/limits.ts
 var LOOP_BRAKE = 10;
 function countRuns(runs, subject, currentRunId) {
-  const tasks = runs.filter((r) => r.id !== currentRunId && r.conclusion !== "skipped" && /^factory · agent:/.test(r.title));
+  const tasks = runs.filter((r) => r.id !== currentRunId && r.conclusion !== "skipped" && /^factory · (agent|schedule):/.test(r.title));
   const subjectToday = subject === void 0 ? 0 : tasks.filter((r) => r.title.endsWith(` \xB7 #${subject}`)).length;
   return { today: tasks.length, subjectToday };
 }
@@ -16019,16 +16163,73 @@ function startOfDay(now, timeZone) {
   return new Date(Date.UTC(+parts2.year, +parts2.month - 1, +parts2.day) - offset).toISOString();
 }
 
+// src/router/tick.ts
+var RUN_DISPATCH = "factory-run";
+var TICK_MS = 15 * 6e4;
+var BLOCKED = "agent:blocked";
+async function tick({ config, reader, writer, now, runId }) {
+  const lines = [];
+  const runs = await reader.listRunsSince(startOfDay(now, config.timezone));
+  let budget = config.throttles.runsPerDay - countRuns(runs, void 0, runId).today;
+  const busy = new Set(
+    runs.filter((r) => r.id !== runId && r.status !== "completed").flatMap((r) => /· #(\d+)$/.exec(r.title)?.[1] ?? []).map(Number)
+  );
+  const start = async (payload, what) => {
+    if (budget <= 0) {
+      lines.push(`- ${what}: held back, the repo has reached \`throttles.runsPerDay\` (${config.throttles.runsPerDay})`);
+      return;
+    }
+    budget--;
+    await writer.dispatch(RUN_DISPATCH, payload);
+    lines.push(`- ${what}: started`);
+  };
+  const tasks = Object.entries(config.tasks ?? {});
+  const { after, upTo } = await window(reader, now, runId);
+  for (const [name, task] of tasks) {
+    if (!task.schedule) continue;
+    const slot = latestSlot(parseCron(task.schedule.cron), config.timezone, after, upTo);
+    if (!slot) continue;
+    const number = task.schedule.subject;
+    await start({ task: name, trigger: `schedule:${name}`, ...number ? { number } : {} }, `\`${name}\`, scheduled for ${slot.toISOString()}`);
+  }
+  const waiting = [];
+  for (const [name, task] of tasks) {
+    if (!task.label) continue;
+    for (const item of await reader.listOpenLabeled(task.label)) {
+      if (!item.labels.includes(BLOCKED) && !busy.has(item.number)) waiting.push({ number: item.number, task: name, label: task.label });
+    }
+  }
+  waiting.sort((a, b) => a.number - b.number);
+  for (const w of waiting) await start({ task: w.task, trigger: w.label, number: w.number }, `\`${w.label}\` on #${w.number}`);
+  return lines;
+}
+async function window(reader, now, runId) {
+  const ticks = await reader.listTicks();
+  const self = ticks.find((t) => t.id === runId);
+  const upTo = self ? new Date(self.createdAt) : now;
+  const previous = ticks.find(
+    (t) => t.id !== runId && new Date(t.createdAt) < upTo && (t.conclusion === null || t.conclusion === "success")
+  );
+  return { after: previous ? new Date(previous.createdAt) : new Date(upTo.getTime() - TICK_MS), upTo };
+}
+
 // src/router/run.ts
-var BLOCKED = { name: "agent:blocked", color: "b60205", description: "The factory stopped; see its comment" };
+var BLOCKED2 = { name: "agent:blocked", color: "b60205", description: "The factory stopped; see its comment" };
 var TASK_LABEL_COLOR = "1d76db";
 async function runRouter(io) {
   const fetchRepo = io.fetchRepo ?? gitFetcher({ cacheDir: io.cacheDir, token: io.factoryToken });
   const loaded = await loadConfig({ clientRoot: io.clientRoot, factoryRoot: io.factoryRoot, fetchRepo });
   const reader = io.api(io.githubToken);
   const writer = io.factoryToken ? io.api(io.factoryToken) : void 0;
+  const event = await resolveSweptItem({ name: io.eventName, payload: io.payload }, reader);
+  if ("ignore" in event) {
+    const decision2 = { kind: "ignore", reason: event.ignore, warnings: [] };
+    io.summary(summaryFor(decision2, loaded));
+    io.setOutput("decision", JSON.stringify(decision2));
+    return decision2;
+  }
   let decision = route({
-    event: { name: io.eventName, payload: io.payload },
+    event,
     config: loaded,
     context: {
       hasFactoryToken: writer !== void 0,
@@ -16059,7 +16260,11 @@ async function runRouter(io) {
       );
     }
   }
-  const trigger = io.payload.label?.name;
+  let tickReport;
+  if (decision.kind === "sweep" && writer) {
+    tickReport = await tick({ config: loaded.config, reader, writer, now: io.now ?? /* @__PURE__ */ new Date(), runId: io.runId });
+  }
+  const trigger = event.payload.label?.name;
   const assignee = loaded.ok ? loaded.config.assignee : void 0;
   if (decision.kind === "run" && "number" in decision.subject) {
     if (trigger) await writer.removeLabel(decision.subject.number, trigger);
@@ -16068,18 +16273,32 @@ async function runRouter(io) {
     await postDeferral(decision, writer, io);
   } else if (decision.kind === "refuse") {
     if (decision.code === "loop-brake" && decision.subject && "number" in decision.subject) {
-      await writer.addLabels(decision.subject.number, [BLOCKED.name]);
+      await writer.addLabels(decision.subject.number, [BLOCKED2.name]);
       if (assignee) await writer.addAssignees(decision.subject.number, [assignee]);
     }
     await postRefusal(decision, { io, loaded, reader, writer, trigger });
   }
-  io.summary(summaryFor(decision, loaded));
+  io.summary(summaryFor(decision, loaded, tickReport));
   io.setOutput("decision", JSON.stringify(decision));
   if (decision.kind === "run") {
     io.setOutput("task", decision.task);
     io.setOutput("agent-job", JSON.stringify(agentJobSettings(loaded.config, decision.task)));
   }
   return decision;
+}
+async function resolveSweptItem(event, reader) {
+  const payload = event.payload;
+  const { trigger, number } = payload.client_payload ?? {};
+  if (event.name !== "repository_dispatch" || payload.action !== RUN_DISPATCH || !trigger?.startsWith("agent:")) return event;
+  if (typeof number !== "number") return { ignore: `a ${RUN_DISPATCH} dispatch for ${trigger} names no item` };
+  const item = await reader.getIssue(number);
+  if (!item.open || !item.labels.includes(trigger)) return { ignore: `#${number} no longer waits on ${trigger}` };
+  const label = { name: trigger };
+  const sender = { login: await reader.labeler(number, trigger) ?? "(unknown)" };
+  if (!item.isPullRequest) return { name: "issues", payload: { action: "labeled", label, issue: { number }, sender } };
+  const pull = await reader.getPull(number);
+  const pullRequest = { number, head: { repo: pull.headRepo ? { full_name: pull.headRepo } : null }, base: { repo: { full_name: pull.baseRepo } } };
+  return { name: "pull_request_target", payload: { action: "labeled", label, pull_request: pullRequest, sender } };
 }
 async function applyLimits(decision, io, loaded, reader) {
   const config = loaded.config;
@@ -16119,21 +16338,27 @@ async function postRefusal(decision, ctx) {
 
 [Run](${ctx.io.runUrl})` : ""}`;
   const subject = decision.subject;
-  if (subject && "number" in subject) {
+  const target = subject && ("number" in subject ? subject.number : subject.origin);
+  if (target !== void 0) {
     const poster = ctx.writer ?? ctx.reader;
-    await poster.comment(subject.number, body);
-    if (ctx.trigger) await poster.removeLabel(subject.number, ctx.trigger);
+    await poster.comment(target, body);
+    if (ctx.trigger) await poster.removeLabel(target, ctx.trigger);
     return;
   }
   const operatorIssue = ctx.loaded.config.operatorIssue;
-  if (ctx.writer && typeof operatorIssue === "number") await ctx.writer.comment(operatorIssue, body);
+  if (!ctx.writer || typeof operatorIssue !== "number") return;
+  const day = (ctx.io.now ?? /* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+  const marker = `<!-- factory:refused ${decision.code} ${day} -->`;
+  if ((await ctx.writer.listComments(operatorIssue)).some((c) => c.body.startsWith(marker))) return;
+  await ctx.writer.comment(operatorIssue, `${marker}
+${body}`);
 }
 async function ensureLabels(reader, writer, config) {
   const wanted = /* @__PURE__ */ new Map();
   for (const [name, spec] of Object.entries(config.tasks ?? {})) {
     if (spec.label) wanted.set(spec.label, { name: spec.label, color: TASK_LABEL_COLOR, description: `Starts the factory's ${name} task` });
   }
-  wanted.set(BLOCKED.name, BLOCKED);
+  wanted.set(BLOCKED2.name, BLOCKED2);
   for (const [name, spec] of Object.entries(config.labels ?? {})) {
     const base = wanted.get(name) ?? { name, color: "ededed", description: "" };
     wanted.set(name, { name, color: spec.color ?? base.color, description: spec.description ?? base.description });
@@ -16147,8 +16372,9 @@ async function ensureLabels(reader, writer, config) {
     }
   }
 }
-function summaryFor(decision, loaded) {
+function summaryFor(decision, loaded, tickReport) {
   const lines = [`### actions-factory: ${headline(decision)}`, ""];
+  if (tickReport) lines.push(tickReport.length > 0 ? tickReport.join("\n") : "Nothing is due or waiting.", "");
   for (const warning of decision.warnings) lines.push(`> [!WARNING]`, `> ${warning}`, "");
   if (decision.kind === "refuse") lines.push(decision.message, "");
   if (decision.kind === "defer") lines.push(decision.reason, "");
@@ -16164,7 +16390,7 @@ function headline(decision) {
     case "command":
       return decision.command === "show-config" ? "show-config" : `${decision.command} (not available yet)`;
     case "sweep":
-      return "sweep (not available yet)";
+      return "tick";
     case "defer":
       return `deferred on ${"number" in decision.subject ? `#${decision.subject.number}` : decision.subject.kind}`;
     case "ignore":
@@ -16358,7 +16584,7 @@ function isMap2(value) {
 }
 
 // src/runner/apply.ts
-var BLOCKED2 = "agent:blocked";
+var BLOCKED3 = "agent:blocked";
 var WORKFLOWS = ".github/workflows/";
 var Refusal = class extends Error {
 };
@@ -16371,7 +16597,7 @@ async function applyRun(io) {
   } catch (error) {
     const reason2 = error instanceof Error ? error.message : String(error);
     if (target !== void 0) {
-      await io.api.addLabels(target, [BLOCKED2]);
+      await io.api.addLabels(target, [BLOCKED3]);
       if (io.assignee) await io.api.addAssignees(target, [io.assignee]);
       const retry = io.task.label ? ` To retry, add \`${io.task.label}\` again.` : "";
       await upsertStatus(io, target, `\u26D4 \`${io.taskName}\` stopped: ${reason2}${retry}`);

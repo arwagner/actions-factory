@@ -5,10 +5,13 @@ export class FakeGitHub {
   labels: Label[] = [];
   permissions: Record<string, string> = {};
   comments: Record<number, Array<{ id: number; body: string; author?: string }>> = {};
-  issues: Record<number, { title: string; body: string }> = {};
+  issues: Record<number, { title: string; body: string; open?: boolean; labels?: string[]; isPullRequest?: boolean }> = {};
+  /** Who added a label, keyed `number:label`, as the issue events API reports it. */
+  labelers: Record<string, string> = {};
+  ticks: Array<{ id: number; createdAt: string; conclusion: string | null }> = [];
   search: Array<{ number: number; title: string; body: string }> = [];
-  runs: Array<{ id: number; title: string; conclusion: string | null }> = [];
-  pulls: Record<number, { head: string; mergeable: boolean; pending?: boolean }> = {};
+  runs: Array<{ id: number; title: string; conclusion: string | null; status?: string }> = [];
+  pulls: Record<number, { head: string; mergeable: boolean; pending?: boolean; headRepo?: string | null }> = {};
   /** Successive getPull answers for a PR, consumed in order, then `pulls` takes over. */
   pullSequence: Record<number, Array<{ head: string; mergeable: boolean; pending: boolean }>> = {};
   writes: Array<{ token: string; call: string; args: unknown }> = [];
@@ -39,7 +42,20 @@ export class FakeGitHub {
       },
       listComments: async (number) =>
         structuredClone(this.comments[number] ?? []).map((c) => ({ ...c, author: c.author ?? "factory-bot" })),
-      getIssue: async (number) => ({ ...(this.issues[number] ?? { title: "", body: "" }), isPullRequest: false }),
+      getIssue: async (number) => {
+        const issue = this.issues[number] ?? { title: "", body: "" };
+        return { title: issue.title, body: issue.body, isPullRequest: issue.isPullRequest ?? false, open: issue.open ?? true, labels: issue.labels ?? [] };
+      },
+      listOpenLabeled: async (label) =>
+        Object.entries(this.issues)
+          .filter(([, i]) => i.open !== false && i.labels?.includes(label))
+          .map(([n, i]) => ({ number: Number(n), labels: [...(i.labels ?? [])] }))
+          .sort((a, b) => a.number - b.number),
+      labeler: async (number, label) => this.labelers[`${number}:${label}`],
+      listTicks: async () => structuredClone(this.ticks),
+      dispatch: async (eventType, payload) => {
+        record("dispatch", { eventType, payload });
+      },
       searchIssues: async () => structuredClone(this.search),
       updateComment: async (id, body) => {
         record("updateComment", { id, body });
@@ -57,16 +73,16 @@ export class FakeGitHub {
         const next = this.pullSequence[number]?.shift();
         if (next) {
           this.pulls[number] = next;
-          return next;
+          return { headRepo: "o/r", baseRepo: "o/r", ...next };
         }
         const pull = this.pulls[number] ?? { head: "feature", mergeable: false };
-        return { pending: false, ...pull };
+        return { pending: false, headRepo: "o/r", baseRepo: "o/r", ...pull };
       },
       createPull: async (pull) => {
         record("createPull", pull);
         return 77;
       },
-      listRunsSince: async () => structuredClone(this.runs),
+      listRunsSince: async () => this.runs.map((r) => ({ status: "completed", ...r })),
       addAssignees: async (number, logins) => {
         record("addAssignees", { number, logins });
       },

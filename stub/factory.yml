@@ -2,7 +2,8 @@
 # Copy this file to .github/workflows/factory.yml on your default branch. Don't edit it:
 # behaviour lives in factory.yml. To update, copy a newer stub over it.
 name: factory
-run-name: "factory · ${{ github.event.label.name || inputs.command || (github.event_name == 'schedule' && 'tick') || github.event_name }}${{ (github.event.issue.number || github.event.pull_request.number) && format(' · #{0}', github.event.issue.number || github.event.pull_request.number) || '' }}"
+# The title is how the router counts runs (runsPerDay, loop brake) and finds the last tick: keep it as it is.
+run-name: "factory · ${{ github.event.label.name || github.event.client_payload.trigger || inputs.command || (github.event_name == 'schedule' && 'tick') || github.event_name }}${{ (github.event.issue.number || github.event.pull_request.number || github.event.client_payload.number) && format(' · #{0}', github.event.issue.number || github.event.pull_request.number || github.event.client_payload.number) || '' }}"
 
 on:
   issues:
