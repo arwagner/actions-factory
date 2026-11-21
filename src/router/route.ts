@@ -9,6 +9,7 @@ export type Decision = (
   | { kind: "ignore"; reason: string }
   | { kind: "refuse"; code: RefusalCode; message: string; subject?: Subject }
   | { kind: "command"; command: Command }
+  | { kind: "defer"; reason: string; subject: Subject }
   | { kind: "sweep" }
 ) & { warnings: string[] };
 
@@ -19,7 +20,8 @@ export type RefusalCode =
   | "bad-config"
   | "wrong-subject"
   | "unknown-command"
-  | "not-writer";
+  | "not-writer"
+  | "loop-brake";
 
 export const COMMANDS = ["doctor", "show-config"] as const;
 export type Command = (typeof COMMANDS)[number];

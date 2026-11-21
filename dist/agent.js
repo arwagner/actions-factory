@@ -15835,6 +15835,24 @@ function gitHubApi(token, owner, repo, baseUrl = "https://api.github.com") {
     },
     async mergePull(number) {
       await call("PUT", `/pulls/${number}/merge`, { merge_method: "merge" });
+    },
+    async listRunsSince(since) {
+      const runs = [];
+      for (let page = 1; page <= 10; page++) {
+        const batch = await call("GET", `/actions/runs?per_page=100&page=${page}&created=${enc(`>=${since}`)}`);
+        runs.push(...batch.workflow_runs.map((r) => ({ id: r.id, title: r.display_title, conclusion: r.conclusion })));
+        if (batch.workflow_runs.length < 100) break;
+      }
+      return runs;
+    },
+    async addAssignees(issueNumber, logins) {
+      await call("POST", `/issues/${issueNumber}/assignees`, { assignees: logins });
+    },
+    async removeAssignees(issueNumber, logins) {
+      await call("DELETE", `/issues/${issueNumber}/assignees`, { assignees: logins });
+    },
+    async requestReviewers(pullNumber, logins) {
+      await call("POST", `/pulls/${pullNumber}/requested_reviewers`, { reviewers: logins }, [422]);
     }
   };
 }

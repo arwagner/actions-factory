@@ -185,4 +185,23 @@ describe("applyRun", () => {
     expect(hooks[0].path).toBe("/t/hooks/after.sh");
     expect(hooks[0].env).toMatchObject({ FACTORY_OUTCOME: "done", FACTORY_SUBJECT: "42" });
   });
+
+  describe("assignee", () => {
+    it("is assigned what waits on a person, and an item the run parks", async () => {
+      const waits = { ...implement, outcomes: { done: { addLabels: [], removeLabels: [], waitsOnPerson: true } } };
+      await applyRun(io({ task: waits, assignee: "ana", prsGetFactoryReview: true }));
+      expect(gh.calls("addAssignees").map((w) => w.args)).toEqual([{ number: 42, logins: ["ana"] }]);
+
+      gh = new FakeGitHub();
+      await applyRun(io({ plan: { outcome: "nope" }, assignee: "ana" }));
+      expect(gh.calls("addAssignees").map((w) => w.args)).toEqual([{ number: 42, logins: ["ana"] }]);
+    });
+
+    it("is asked to review a factory PR when no factory task reviews PRs", async () => {
+      await applyRun(io({ assignee: "ana", prsGetFactoryReview: false }));
+
+      expect(gh.calls("addAssignees").map((w) => w.args)).toEqual([{ number: 77, logins: ["ana"] }]);
+      expect(gh.calls("requestReviewers").map((w) => w.args)).toEqual([{ number: 77, logins: ["ana"] }]);
+    });
+  });
 });

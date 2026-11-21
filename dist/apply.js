@@ -15704,6 +15704,24 @@ function gitHubApi(token, owner, repo, baseUrl = "https://api.github.com") {
     },
     async mergePull(number) {
       await call("PUT", `/pulls/${number}/merge`, { merge_method: "merge" });
+    },
+    async listRunsSince(since) {
+      const runs = [];
+      for (let page = 1; page <= 10; page++) {
+        const batch = await call("GET", `/actions/runs?per_page=100&page=${page}&created=${enc(`>=${since}`)}`);
+        runs.push(...batch.workflow_runs.map((r) => ({ id: r.id, title: r.display_title, conclusion: r.conclusion })));
+        if (batch.workflow_runs.length < 100) break;
+      }
+      return runs;
+    },
+    async addAssignees(issueNumber, logins) {
+      await call("POST", `/issues/${issueNumber}/assignees`, { assignees: logins });
+    },
+    async removeAssignees(issueNumber, logins) {
+      await call("DELETE", `/issues/${issueNumber}/assignees`, { assignees: logins });
+    },
+    async requestReviewers(pullNumber, logins) {
+      await call("POST", `/pulls/${pullNumber}/requested_reviewers`, { reviewers: logins }, [422]);
     }
   };
 }
@@ -15864,6 +15882,7 @@ async function applyRun(io) {
     const reason2 = error instanceof Error ? error.message : String(error);
     if (target !== void 0) {
       await io.api.addLabels(target, [BLOCKED]);
+      if (io.assignee) await io.api.addAssignees(target, [io.assignee]);
       const retry = io.task.label ? ` To retry, add \`${io.task.label}\` again.` : "";
       await upsertStatus(io, target, `\u26D4 \`${io.taskName}\` stopped: ${reason2}${retry}`);
     }
@@ -15897,6 +15916,10 @@ ${errors.map((e) => `- \`${e.path || "plan"}\`: ${e.message}`).join("\n")}`);
     const draft = io.task.writes.pullRequest !== false && io.task.writes.pullRequest.draft;
     const base = await io.api.defaultBranch();
     pullNumber = await io.api.createPull({ ...plan.pullRequest, head: branch, base, draft });
+    if (io.assignee && !io.prsGetFactoryReview) {
+      await io.api.addAssignees(pullNumber, [io.assignee]);
+      await io.api.requestReviewers(pullNumber, [io.assignee]);
+    }
   }
   if (number !== void 0) await applyItem(io, number, plan);
   for (const issue of plan.createIssues ?? []) {
@@ -15953,6 +15976,7 @@ async function applyItem(io, number, item) {
   if (add.length > 0) await io.api.addLabels(number, add);
   for (const label of remove) await io.api.removeLabel(number, label);
   if (item.close === true || item.closeIssue === true) await io.api.closeIssue(number);
+  if (outcome.waitsOnPerson && io.assignee) await io.api.addAssignees(number, [io.assignee]);
 }
 function statusTarget(subject) {
   if ("number" in subject) return subject.number;
@@ -16039,6 +16063,10 @@ async function main() {
     api: gitHubApi(token, owner, repo, env("GITHUB_API_URL")),
     runId: required("GITHUB_RUN_ID"),
     runUrl: `${server}/${owner}/${repo}/actions/runs/${required("GITHUB_RUN_ID")}`,
+    assignee: loaded.config.assignee,
+    prsGetFactoryReview: Object.values(loaded.config.tasks).some(
+      (t) => t.subject === "pr" && t.label !== void 0 && !t.writes.merge
+    ),
     runHook: (path, hookEnv) => runHook(path, { ...hookEnv, FACTORY_TOKEN: token, GH_TOKEN: token }, checkout)
   });
   if (!result.ok) {

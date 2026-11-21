@@ -29,6 +29,10 @@ export interface ApplyIO {
   runId: string;
   runUrl: string;
   runHook: (path: string, env: Record<string, string>) => Promise<void>;
+  /** `assignee:` from the config, if set. */
+  assignee?: string;
+  /** Whether some factory task reviews pull requests. If none does, a PR the factory opens asks the assignee to. */
+  prsGetFactoryReview?: boolean;
 }
 
 export type ApplyResult = { ok: true; outcome: string } | { ok: false; reason: string };
@@ -52,6 +56,7 @@ export async function applyRun(io: ApplyIO): Promise<ApplyResult> {
     const reason = error instanceof Error ? error.message : String(error);
     if (target !== undefined) {
       await io.api.addLabels(target, [BLOCKED]);
+      if (io.assignee) await io.api.addAssignees(target, [io.assignee]);
       const retry = io.task.label ? ` To retry, add \`${io.task.label}\` again.` : "";
       await upsertStatus(io, target, `⛔ \`${io.taskName}\` stopped: ${reason}${retry}`);
     }
@@ -88,6 +93,10 @@ async function applyWrites(io: ApplyIO): Promise<string> {
     const draft = io.task.writes.pullRequest !== false && io.task.writes.pullRequest.draft;
     const base = await io.api.defaultBranch();
     pullNumber = await io.api.createPull({ ...(plan.pullRequest as { title: string; body: string }), head: branch, base, draft });
+    if (io.assignee && !io.prsGetFactoryReview) {
+      await io.api.addAssignees(pullNumber, [io.assignee]);
+      await io.api.requestReviewers(pullNumber, [io.assignee]);
+    }
   }
   if (number !== undefined) await applyItem(io, number, plan);
   for (const issue of (plan.createIssues ?? []) as Array<{ title: string; body: string; labels?: string[] }>) {
@@ -152,6 +161,7 @@ async function applyItem(io: ApplyIO, number: number, item: Record<string, unkno
   if (add.length > 0) await io.api.addLabels(number, add);
   for (const label of remove) await io.api.removeLabel(number, label);
   if (item.close === true || item.closeIssue === true) await io.api.closeIssue(number);
+  if (outcome.waitsOnPerson && io.assignee) await io.api.addAssignees(number, [io.assignee]);
 }
 
 function statusTarget(subject: Subject): number | undefined {

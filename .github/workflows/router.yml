@@ -24,6 +24,12 @@ on:
       COPILOT_GITHUB_TOKEN:
         required: false
 
+# One run per subject at a time, queued in order rather than dropped (§7).
+concurrency:
+  group: factory-${{ github.repository }}-${{ github.event.issue.number || github.event.pull_request.number || github.event.client_payload.number || github.run_id }}
+  cancel-in-progress: false
+  queue: max
+
 jobs:
   route:
     runs-on: ubuntu-latest
@@ -79,6 +85,10 @@ jobs:
     runs-on: ${{ fromJSON(needs.route.outputs.agent-job).runsOn }}
     container: ${{ fromJSON(needs.route.outputs.agent-job).container }}
     timeout-minutes: ${{ fromJSON(needs.route.outputs.agent-job).jobTimeout }}
+    concurrency:
+      group: ${{ fromJSON(needs.route.outputs.agent-job).repoWide && format('factory-{0}', github.repository) || format('factory-{0}-run-{1}', github.repository, github.run_id) }}
+      cancel-in-progress: false
+      queue: max
     env:
       AGENT: ${{ fromJSON(needs.route.outputs.agent-job).agent }}
       FACTORY_REPO_PRIVATE: ${{ github.event.repository.private }}
