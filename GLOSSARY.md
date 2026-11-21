@@ -4,6 +4,8 @@
 
 **Client repo**: A repository that uses the factory by referring to this repo and keeping a factory config. This repo is a client repo of itself.
 
+**Stub**: The one workflow file a client repo copies in to use the factory. It does no work itself: it passes each event to the factory, at the version it names. _Avoid_: caller workflow, wrapper.
+
 **Ticket**: A GitHub issue in a client repo that the factory works on.
 
 **Task**: One kind of factory work started on a ticket or PR (for example explore, implement, review, merge). It is triggered by a label or a schedule. _Avoid_: stage, job, workflow (those mean other things on GitHub).
