@@ -140,4 +140,20 @@ describe("the agent job", () => {
     await handoff(ungated);
     expect(meta(ungated).checksPassed).toBe(true);
   });
+
+  it("keeps commits the agent made itself, measured from where the job started", async () => {
+    const io = setup({ ".factory/fake/implement.json": script({ outcome: "done" }) });
+    await prepare(io);
+    const base = git(io.checkout, "rev-parse", "HEAD");
+    await runTurn(io, 1);
+    execFileSync("sh", ["-c", "echo one > one.txt && git add one.txt && git -c user.name=a -c user.email=a@a commit -qm one && echo two > two.txt"], { cwd: io.checkout });
+
+    await handoff(io);
+
+    const bundle = join(io.workDir, "handoff/work.bundle");
+    const clone = tree({});
+    git(clone, "clone", "-q", io.checkout, "c");
+    git(join(clone, "c"), "fetch", "-q", bundle, "factory-work:fw");
+    expect(git(join(clone, "c"), "diff", "--name-only", `${base}...fw`).split("\n").sort()).toEqual(["one.txt", "two.txt"]);
+  });
 });

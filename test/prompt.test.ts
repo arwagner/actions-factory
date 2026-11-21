@@ -40,6 +40,10 @@ describe("buildPrompt", () => {
     expect(text).toContain("done, needs-a-human");
   });
 
+  it("lists the checks the factory will run", () => {
+    expect(buildPrompt({ ...base, items: [], checks: ["npm ci", "npm test"] })).toContain("- `npm ci`\n- `npm test`");
+  });
+
   it("tells a later round what the checks reported", () => {
     const text = buildPrompt({ ...base, items: [], checkFailure: "npm test: 2 failing" });
 

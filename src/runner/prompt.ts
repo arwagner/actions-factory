@@ -14,6 +14,8 @@ export interface PromptInput {
   /** The subject: one item, a batch, or none for a repo task. */
   items: PromptItem[];
   outcomes: string[];
+  /** The repo's checks, which the factory runs after the agent. */
+  checks?: string[];
   planFile: string;
   planSchemaFile: string;
   /** For a later round: the failing checks' output, scrubbed. */
@@ -40,6 +42,17 @@ export function buildPrompt(input: PromptInput): string {
         "<<<UNTRUSTED",
         ...input.items.map(renderItem),
         "UNTRUSTED>>>",
+      ].join("\n"),
+    );
+  }
+  if (input.checks && input.checks.length > 0) {
+    parts.push(
+      [
+        "## Checks",
+        "",
+        "The factory runs these after you, in this order, and pushes only if they pass. Run them yourself before you finish:",
+        "",
+        ...input.checks.map((c) => `- \`${c}\``),
       ].join("\n"),
     );
   }

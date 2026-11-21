@@ -23,8 +23,11 @@ export interface GitHubApi {
   closeIssue(issueNumber: number): Promise<void>;
   createIssue(issue: { title: string; body: string; labels?: string[] }): Promise<number>;
   defaultBranch(): Promise<string>;
-  /** Head branch name and whether GitHub can merge it now (mergeable, checks green). */
-  getPull(number: number): Promise<{ head: string; mergeable: boolean }>;
+  /**
+   * Head branch name; whether GitHub can merge it now (mergeable, checks green); and whether that may still
+   * change (mergeability being computed, or check runs on the head not finished).
+   */
+  getPull(number: number): Promise<{ head: string; mergeable: boolean; pending: boolean }>;
   createPull(pull: { title: string; body: string; head: string; base: string; draft: boolean }): Promise<number>;
   /** Merges with a merge commit. Throws if GitHub refuses. */
   mergePull(number: number): Promise<void>;
@@ -120,8 +123,18 @@ export function gitHubApi(token: string, owner: string, repo: string, baseUrl = 
       return ((await call("GET", "")) as { default_branch: string }).default_branch;
     },
     async getPull(number) {
-      const pull = (await call("GET", `/pulls/${number}`)) as { head: { ref: string }; mergeable: boolean | null; mergeable_state: string };
-      return { head: pull.head.ref, mergeable: pull.mergeable === true && pull.mergeable_state === "clean" };
+      const pull = (await call("GET", `/pulls/${number}`)) as {
+        head: { ref: string; sha: string };
+        mergeable: boolean | null;
+        mergeable_state: string;
+      };
+      const checks = (await call("GET", `/commits/${pull.head.sha}/check-runs?per_page=100`)) as { check_runs: Array<{ status: string }> };
+      const running = checks.check_runs.some((c) => c.status !== "completed");
+      return {
+        head: pull.head.ref,
+        mergeable: pull.mergeable === true && pull.mergeable_state === "clean",
+        pending: pull.mergeable === null || pull.mergeable_state === "unknown" || running,
+      };
     },
     async createPull(pull) {
       return ((await call("POST", "/pulls", pull)) as { number: number }).number;
