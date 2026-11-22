@@ -16001,14 +16001,17 @@ function gitHubApi(token, owner, repo, baseUrl = "https://api.github.com") {
     async defaultBranch() {
       return (await call("GET", "")).default_branch;
     },
-    async getPull(number) {
+    async getPull(number, ownRunId) {
       const pull = await call("GET", `/pulls/${number}`);
       const checks = await call("GET", `/commits/${pull.head.sha}/check-runs?per_page=100`, void 0, [403]);
-      const running = checks?.check_runs.some((c) => c.status !== "completed") ?? false;
+      const others = (checks?.check_runs ?? []).filter((c) => !(ownRunId && c.details_url?.includes(`/actions/runs/${ownRunId}/`)));
+      const running = others.some((c) => c.status !== "completed");
+      const failed = others.some((c) => ["failure", "timed_out", "cancelled", "action_required", "startup_failure"].includes(c.conclusion ?? ""));
+      const state = pull.mergeable_state;
       return {
         head: pull.head.ref,
-        mergeable: pull.mergeable === true && pull.mergeable_state === "clean",
-        pending: pull.mergeable === null || pull.mergeable_state === "unknown" || running
+        mergeable: pull.mergeable === true && ["clean", "unstable", "has_hooks"].includes(state) && !running && !failed,
+        pending: pull.mergeable === null || state === "unknown" || running || checks === void 0 && state === "blocked"
       };
     },
     async pullInfo(number) {
@@ -17120,10 +17123,10 @@ var MERGE_POLL_MS = 3e4;
 var MERGE_WAIT_MS = 30 * 6e4;
 async function mergeWhenReady(io, number) {
   const sleep = io.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
-  let pull = await io.api.getPull(number);
+  let pull = await io.api.getPull(number, io.runId);
   for (let waited = 0; pull.pending && !pull.mergeable && waited < MERGE_WAIT_MS; waited += MERGE_POLL_MS) {
     await sleep(MERGE_POLL_MS);
-    pull = await io.api.getPull(number);
+    pull = await io.api.getPull(number, io.runId);
   }
   if (!pull.mergeable) {
     const why = pull.pending ? "its checks were still running after 30 minutes" : "it has conflicts, failing checks or missing reviews";

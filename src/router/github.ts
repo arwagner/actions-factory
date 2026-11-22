@@ -31,7 +31,7 @@ export interface GitHubApi {
    * Head branch name; whether GitHub can merge it now (mergeable, checks green); and whether that may still
    * change (mergeability being computed, or check runs on the head not finished).
    */
-  getPull(number: number): Promise<{ head: string; mergeable: boolean; pending: boolean }>;
+  getPull(number: number, ownRunId?: string): Promise<{ head: string; mergeable: boolean; pending: boolean }>;
   /** A PR's branches, commits and repos, without its checks: the default token can read this. */
   pullInfo(number: number): Promise<{ head: string; headSha: string; base: string; headRepo: string | null; baseRepo: string }>;
   /** The commit a branch points at, or undefined if there's no such branch. */
@@ -178,7 +178,7 @@ export function gitHubApi(token: string, owner: string, repo: string, baseUrl = 
     async defaultBranch() {
       return ((await call("GET", "")) as { default_branch: string }).default_branch;
     },
-    async getPull(number) {
+    async getPull(number, ownRunId) {
       const pull = (await call("GET", `/pulls/${number}`)) as {
         head: { ref: string; sha: string; repo: { full_name: string } | null };
         base: { sha: string; repo: { full_name: string } };
@@ -186,15 +186,20 @@ export function gitHubApi(token: string, owner: string, repo: string, baseUrl = 
         mergeable_state: string;
       };
       // Listing check runs needs the Checks permission, which the recommended token leaves out. Without it,
-      // GitHub's mergeable_state alone says whether required checks are still running.
+      // GitHub's mergeable_state alone says whether required checks are still running ("blocked").
       const checks = (await call("GET", `/commits/${pull.head.sha}/check-runs?per_page=100`, undefined, [403])) as
-        | { check_runs: Array<{ status: string }> }
+        | { check_runs: Array<{ status: string; conclusion: string | null; details_url?: string | null }> }
         | undefined;
-      const running = checks?.check_runs.some((c) => c.status !== "completed") ?? false;
+      // The run that's merging shows up among the head's check runs too, still going: never wait on it. It also
+      // makes GitHub call the PR "unstable", which still merges; required checks are GitHub's to enforce.
+      const others = (checks?.check_runs ?? []).filter((c) => !(ownRunId && c.details_url?.includes(`/actions/runs/${ownRunId}/`)));
+      const running = others.some((c) => c.status !== "completed");
+      const failed = others.some((c) => ["failure", "timed_out", "cancelled", "action_required", "startup_failure"].includes(c.conclusion ?? ""));
+      const state = pull.mergeable_state;
       return {
         head: pull.head.ref,
-        mergeable: pull.mergeable === true && pull.mergeable_state === "clean",
-        pending: pull.mergeable === null || pull.mergeable_state === "unknown" || running,
+        mergeable: pull.mergeable === true && ["clean", "unstable", "has_hooks"].includes(state) && !running && !failed,
+        pending: pull.mergeable === null || state === "unknown" || running || (checks === undefined && state === "blocked"),
       };
     },
     async pullInfo(number) {
