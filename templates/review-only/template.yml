@@ -1,0 +1,17 @@
+name: review-only
+description: Only review. Add agent:review to a pull request and the factory reviews it, fixes what a person needn't decide, and posts a verdict. The easiest first step.
+schemaVersions: [1]
+extends: default
+
+tasks:
+  explore: null
+  implement: null
+  merge: null
+  # Reviews here are mostly of people's branches, which the factory never pushes to: report, don't fix.
+  review:
+    permission: read-only
+    writes:
+      push: false
+    instructions: |
+      This pull request's branch belongs to a person, so change no code and commit nothing, whatever the
+      sections above say about fixing. Every finding goes under "Left for a person", with the fix you'd make.

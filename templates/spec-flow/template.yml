@@ -1,0 +1,85 @@
+name: spec-flow
+description: A spec-led pipeline on one issue, discover → define → specify → plan → implement → review, with a person signing off between stages.
+schemaVersions: [1]
+
+labels:
+  needs-signoff: { color: 'fbca04', description: A stage is done and waits on a person to start the next }
+  needs-a-human: { color: 'd93f0b', description: Waits on a person to decide something }
+
+# Each stage posts its write-up as a comment on the issue; later stages read it there. A person signs off by
+# adding the next stage's label. The first four stages change no code.
+tasks:
+  discover:
+    label: agent:discover
+    subject: issue
+    prompt: tasks/discover/prompt.md
+    permission: read-only
+    writes: { comment: true }
+    outcomes:
+      ready: { addLabels: [needs-signoff], waitsOnPerson: true }
+      needs-a-human: { addLabels: [needs-a-human], waitsOnPerson: true }
+
+  define:
+    label: agent:define
+    subject: issue
+    prompt: tasks/define/prompt.md
+    permission: read-only
+    writes: { comment: true }
+    outcomes:
+      ready: { addLabels: [needs-signoff], waitsOnPerson: true }
+      needs-a-human: { addLabels: [needs-a-human], waitsOnPerson: true }
+
+  specify:
+    label: agent:specify
+    subject: issue
+    prompt: tasks/specify/prompt.md
+    permission: read-only
+    writes: { comment: true }
+    outcomes:
+      ready: { addLabels: [needs-signoff], waitsOnPerson: true }
+      needs-a-human: { addLabels: [needs-a-human], waitsOnPerson: true }
+
+  plan:
+    label: agent:plan
+    subject: issue
+    prompt: tasks/plan/prompt.md
+    permission: read-only
+    writes: { comment: true }
+    outcomes:
+      ready: { addLabels: [needs-signoff], waitsOnPerson: true }
+      needs-a-human: { addLabels: [needs-a-human], waitsOnPerson: true }
+
+  implement:
+    label: agent:implement
+    subject: issue
+    prompt: tasks/implement/prompt.md
+    permission: edit-workspace
+    writes:
+      comment: true
+      push: true
+      pullRequest: { draft: true }
+    outcomes:
+      done: { removeLabels: [needs-signoff] }
+      needs-a-human: { addLabels: [needs-a-human], waitsOnPerson: true }
+    hooks:
+      after: ../default/hooks/label-pr.sh
+
+  review:
+    label: agent:review
+    subject: pr
+    prompt: ../default/tasks/review/prompt.md
+    instructions: |
+      This pull request builds the issue's approved spec and plan: hold it to the acceptance criteria in the
+      spec comment on that issue, as well as to the repo's standards.
+    permission: edit-workspace
+    skills:
+      code-review: ../default/skills/code-review
+      clarify: ../default/skills/clarify
+    writes:
+      comment: true
+      push: true
+    outcomes:
+      ready: { waitsOnPerson: true }
+      changes-requested: { waitsOnPerson: true }
+    hooks:
+      after: ../default/hooks/mark-ready.sh
