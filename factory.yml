@@ -1,0 +1,8 @@
+# This repo runs its own factory (§11, dog-fooding): the newest release, on its own issues, with the default
+# template. agent:merge is allowed here; merging to main releases nothing.
+schemaVersion: 1
+assignee: arwagner
+checks:
+  - npm ci
+  - npm run lint
+  - npm test

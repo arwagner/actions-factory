@@ -43,4 +43,12 @@ describe("the stub", () => {
     const names = ["FACTORY_TOKEN", "FACTORY_CHECK_ENV", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "OPENAI_API_KEY", "CODEX_ACCESS_TOKEN", "COPILOT_GITHUB_TOKEN"];
     expect(job.secrets).toEqual(Object.fromEntries(names.map((n) => [n, `\${{ secrets.${n} }}`])));
   });
+
+  it("is what this repo dog-foods, pinned @latest and otherwise unchanged", () => {
+    const dogFood = readFileSync(new URL("../.github/workflows/factory.yml", import.meta.url), "utf8");
+
+    expect(dogFood.replace("router.yml@latest", "router.yml@v1").split("\n").filter((l) => !l.trim().startsWith("#"))).toEqual(
+      text.split("\n").filter((l) => !l.trim().startsWith("#")),
+    );
+  });
 });
