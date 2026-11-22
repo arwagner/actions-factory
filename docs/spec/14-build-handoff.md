@@ -30,6 +30,6 @@ Facts the build must confirm before relying on them:
 
 ## Setup only a person can do
 
-- Create a machine user (optional), and a `FACTORY_TOKEN` for this repo and for `skylight-hq/osh-simulator`. The latter likely needs a Skylight-hq org owner's approval.
+- Create a machine user (optional), and a `FACTORY_TOKEN` for this repo and for `skylight-hq/osh-simulator`. Neither needed an org owner's approval in practice.
 - Create the wiki's first page by hand.
 - Put an agent credential in this repo, and in the sandbox for the optional real-agent smoke run.

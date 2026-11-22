@@ -202,10 +202,10 @@ const MERGE_WAIT_MS = 30 * 60_000;
 /** Waits for GitHub's checks on the head (up to 30 minutes), then merges with a merge commit, or parks. */
 async function mergeWhenReady(io: ApplyIO, number: number): Promise<void> {
   const sleep = io.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
-  let pull = await io.api.getPull(number);
+  let pull = await io.api.getPull(number, io.runId);
   for (let waited = 0; pull.pending && !pull.mergeable && waited < MERGE_WAIT_MS; waited += MERGE_POLL_MS) {
     await sleep(MERGE_POLL_MS);
-    pull = await io.api.getPull(number);
+    pull = await io.api.getPull(number, io.runId);
   }
   if (!pull.mergeable) {
     const why = pull.pending ? "its checks were still running after 30 minutes" : "it has conflicts, failing checks or missing reviews";

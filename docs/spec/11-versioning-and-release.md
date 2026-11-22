@@ -33,8 +33,9 @@ Before a major release, an optional, manually started smoke run uses real agents
 ## Sandbox
 
 - `skylight-hq/osh-simulator` is the sandbox client. It sits in another account, so every release tests the cross-owner path.
-- It needs the stub on its `main` (label events fire only from the default branch) and a `FACTORY_TOKEN` targeting Skylight-hq, which likely needs an org owner's approval.
-- Scenarios use the `fake` adapter, which returns ready-made plans with no LLM call. They run label → router → task → writes → next label for each shipped template.
+- It needs the stub on its `main` (label events fire only from the default branch), calling the router at `@release-candidate`. The release workflow points that branch at the candidate commit before the scenarios run. It also needs its own `FACTORY_TOKEN`.
+- This repo holds a `SANDBOX_TOKEN` that can act on the sandbox (Contents, Issues, Pull requests and Actions set to write). The scenarios use it to set the sandbox's config and to add labels the way a person would, `agent:merge` included.
+- Scenarios (`scripts/e2e.ts`) use the `fake` adapter, which returns ready-made plans with no LLM call. They run label → router → task → writes → next label for each shipped template, plus the doctor. `docs/releasing.md` has the procedure and the rollback.
 - Scenario issues and PRs carry an `e2e` label and are closed after each run.
 - The `fake` adapter ships in this repo for tests only and isn't documented for clients.
 

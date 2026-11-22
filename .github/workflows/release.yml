@@ -1,0 +1,81 @@
+# Cuts a release (§11): checks, then the sandbox end-to-end scenarios against this commit, and only if they pass,
+# tags vX.Y.Z, moves vX and latest, and writes the release notes from the merged PRs. See docs/releasing.md.
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: The version to release, X.Y.Z. It must match package.json.
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+# Releases and smoke runs share the sandbox and the release-candidate branch: one at a time.
+concurrency:
+  group: sandbox
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      VERSION: ${{ inputs.version }}
+      # Only whether it's set: the token itself goes to the end-to-end step alone.
+      HAS_SANDBOX_TOKEN: ${{ secrets.SANDBOX_TOKEN != '' }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Check the version
+        run: |
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::The version must look like 1.2.3, not $VERSION."; exit 1; }
+          declared=$(node -p 'require("./package.json").version')
+          [ "$declared" = "$VERSION" ] || { echo "::error::package.json says $declared. Bump it in a pull request first."; exit 1; }
+          if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null; then echo "::error::v$VERSION already exists."; exit 1; fi
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+
+      - name: Check dist is built from this commit
+        run: npm run build && git diff --exit-code dist
+
+      # The sandbox's stub calls the router at release-candidate.
+      - name: Point the sandbox at this commit
+        run: git push --force origin HEAD:refs/heads/release-candidate
+
+      # Until this repo has SANDBOX_TOKEN, run `node scripts/e2e.ts` by hand before releasing (docs/releasing.md).
+      - name: End-to-end in the sandbox
+        if: env.HAS_SANDBOX_TOKEN == 'true'
+        env:
+          SANDBOX_TOKEN: ${{ secrets.SANDBOX_TOKEN }}
+        run: node scripts/e2e.ts
+
+      - name: Note the skipped end-to-end run
+        if: env.HAS_SANDBOX_TOKEN != 'true'
+        run: echo "::warning::SANDBOX_TOKEN isn't set, so the sandbox scenarios didn't run. Run them by hand (docs/releasing.md)."
+
+      - name: Tag
+        run: |
+          major="v${VERSION%%.*}"
+          git tag "v$VERSION"
+          git tag -f "$major"
+          git tag -f latest
+          git push origin "v$VERSION"
+          git push --force origin "$major" latest
+
+      - name: Release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "v$VERSION" --verify-tag --title "v$VERSION" --generate-notes

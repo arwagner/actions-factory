@@ -1,0 +1,39 @@
+# The optional smoke run before a major release (§11): the sandbox's implement task on a real agent, against this
+# commit. The sandbox needs that agent's secret. Costs one small agent run. See docs/releasing.md.
+name: smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      agent:
+        description: The agent to run
+        type: choice
+        options: [claude, codex, copilot]
+        default: claude
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sandbox
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: Point the sandbox at this commit
+        run: git push --force origin HEAD:refs/heads/release-candidate
+
+      - name: Smoke run in the sandbox
+        env:
+          SANDBOX_TOKEN: ${{ secrets.SANDBOX_TOKEN }}
+          AGENT: ${{ inputs.agent }}
+        run: node scripts/e2e.ts
