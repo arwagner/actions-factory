@@ -44,6 +44,15 @@ describe("the spec-flow template", () => {
   });
 });
 
+describe("this repo's own factory.yml (dog-fooding)", () => {
+  it("validates, on the default template", async () => {
+    const result = await loadConfig({ clientRoot: factoryRoot, factoryRoot, fetchRepo: () => Promise.reject(new Error("unused")) });
+
+    expect(result.errors).toEqual([]);
+    expect(Object.keys(result.config.tasks as object)).toContain("merge");
+  });
+});
+
 describe("every shipped template", () => {
   it("names nothing after aint-farm", () => {
     const walk = (dir: string): string[] =>
