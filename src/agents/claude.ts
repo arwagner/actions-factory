@@ -24,6 +24,9 @@ export function claudeAdapter(options: ClaudeOptions = {}): Adapter {
   return {
     name: "claude",
     credentials: CREDENTIALS,
+    async install() {
+      await install();
+    },
     async ping() {
       const env = agentEnv();
       const secrets = CREDENTIALS.map((name) => process.env[name]).filter((v): v is string => Boolean(v));

@@ -30,6 +30,9 @@ export function copilotAdapter(options: CopilotOptions = {}): Adapter {
   return {
     name: "copilot",
     credentials: CREDENTIALS,
+    async install() {
+      await install();
+    },
     async run(input) {
       const binary = await install();
       const home = mkdtempSync(join(process.env.RUNNER_TEMP ?? tmpdir(), "factory-copilot-"));
