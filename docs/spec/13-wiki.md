@@ -7,7 +7,8 @@ Decided in: Wiki source and sync (#16), Spec assembly (#24).
 - The source of truth is `docs/wiki/` in this repo. Docs change in the same PR as the code.
 - The release workflow publishes it to the repo's GitHub wiki, pushing with this repo's own `FACTORY_TOKEN`. So the wiki always describes the newest release, which is what `@latest` runs.
 - The wiki is never edited by hand. Every page carries a banner: "generated from `docs/wiki/` at vX.Y.Z — edit there". A hand edit is overwritten on the next release.
-- The wiki's first page is created by hand once, because GitHub requires it.
+- The wiki's first page is created by hand once, because GitHub requires it. The wiki repo's branch is `master`.
+- `scripts/wiki.ts` builds it: the hand-written pages, a page per shipped template from its README (`Template-<name>`), the config reference from the JSON schema, and the sidebar. Tests check every outline page exists, every internal link resolves, every schema field is documented, and Getting started shows the stub exactly as shipped.
 - Docs for older versions are read in the repo at that version's tag. The Versioning page says how.
 
 ## Page outline

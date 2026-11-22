@@ -14966,7 +14966,8 @@ var defs_schema_default = {
         },
         description: {
           type: "string",
-          maxLength: 100
+          maxLength: 100,
+          description: "The label's description in GitHub."
         }
       }
     },
@@ -14976,7 +14977,8 @@ var defs_schema_default = {
         "pr",
         "batch",
         "repo"
-      ]
+      ],
+      description: "What a run is about: an issue, a pull request, a batch of issues (`query`), or the repo."
     },
     outcome: {
       type: "object",
@@ -14984,15 +14986,18 @@ var defs_schema_default = {
       properties: {
         addLabels: {
           $ref: "#/$defs/labelList",
-          default: []
+          default: [],
+          description: "Labels added to the item. `agent:merge` is never allowed."
         },
         removeLabels: {
           $ref: "#/$defs/labelList",
-          default: []
+          default: [],
+          description: "Labels removed from the item."
         },
         waitsOnPerson: {
           type: "boolean",
-          default: false
+          default: false,
+          description: "The item now waits on a person: `assignee` is assigned."
         }
       }
     },
@@ -15038,7 +15043,8 @@ var defs_schema_default = {
         },
         closeIssue: {
           type: "boolean",
-          default: false
+          default: false,
+          description: "Close the subject issue (in a batch, each item's issue)."
         },
         createIssues: {
           type: "integer",
@@ -15093,7 +15099,8 @@ var defs_schema_default = {
               minimum: 1,
               description: "The issue or PR a scheduled run is about, and where its refusals and failures go."
             }
-          }
+          },
+          description: "Run on a schedule as well as (or instead of) a label."
         },
         prompt: {
           type: "string",
@@ -15137,7 +15144,8 @@ var defs_schema_default = {
             "read-only",
             "edit-workspace"
           ],
-          default: "read-only"
+          default: "read-only",
+          description: "`read-only`: the agent changes no files. `edit-workspace`: it may edit the checkout."
         },
         checksGate: {
           type: "boolean",
@@ -15161,7 +15169,8 @@ var defs_schema_default = {
         },
         writes: {
           $ref: "#/$defs/writes",
-          default: {}
+          default: {},
+          description: "What the plan may ask for. See below."
         },
         outcomes: {
           type: "object",
@@ -15182,17 +15191,21 @@ var defs_schema_default = {
           properties: {
             before: {
               type: "string",
-              minLength: 1
+              minLength: 1,
+              description: "Runs in the agent job before the prompt is built, with read access. What it writes to `$FACTORY_WORK_DIR/context.md` goes into the prompt."
             },
             after: {
               type: "string",
-              minLength: 1
+              minLength: 1,
+              description: "Runs in the apply job after every write, with `FACTORY_TOKEN`."
             }
-          }
+          },
+          description: "Scripts from the template's folder, run by the factory, never inside the agent."
         },
         allowWorkflowChanges: {
           type: "boolean",
-          default: false
+          default: false,
+          description: "Allow the agent's changes to touch `.github/workflows/`. The token then needs Workflows: write."
         }
       }
     },
@@ -15234,11 +15247,13 @@ var defs_schema_default = {
         },
         assignee: {
           type: "string",
-          pattern: "^[A-Za-z0-9-]+(\\[bot\\])?$"
+          pattern: "^[A-Za-z0-9-]+(\\[bot\\])?$",
+          description: "A login assigned whatever waits on a person: outcomes with `waitsOnPerson`, parked items, factory PRs no factory review reads."
         },
         operatorIssue: {
           type: "integer",
-          minimum: 1
+          minimum: 1,
+          description: "An issue where refusals and failures with no subject are posted, at most once a day each."
         },
         throttles: {
           type: "object",
@@ -15248,7 +15263,8 @@ var defs_schema_default = {
             runsPerDay: {
               type: "integer",
               minimum: 1,
-              default: 50
+              default: 50,
+              description: "Factory runs a day, repo-wide, counted in `timezone`. Over it, items keep their label and later ticks start them."
             },
             concurrentRuns: {
               oneOf: [
@@ -15259,9 +15275,11 @@ var defs_schema_default = {
                   const: "unlimited"
                 }
               ],
-              default: "unlimited"
+              default: "unlimited",
+              description: "`1` runs one agent job at a time across the repo; `unlimited` leaves it to the account's Actions limit."
             }
-          }
+          },
+          description: "Limits on runs."
         },
         labels: {
           type: "object",
@@ -15289,11 +15307,23 @@ var factory_schema_default = {
   title: "factory.yml",
   description: "The client repo's factory config, `schemaVersion: 1`. The last layer on top of its template.",
   type: "object",
-  required: ["schemaVersion"],
-  allOf: [{ $ref: "defs.schema.json#/$defs/topLevel" }],
+  required: [
+    "schemaVersion"
+  ],
+  allOf: [
+    {
+      $ref: "defs.schema.json#/$defs/topLevel"
+    }
+  ],
   properties: {
-    schemaVersion: { const: 1 },
-    template: { $ref: "defs.schema.json#/$defs/templateRef", default: "default" }
+    schemaVersion: {
+      const: 1,
+      description: "The config format's version. Always `1`."
+    },
+    template: {
+      $ref: "defs.schema.json#/$defs/templateRef",
+      default: "default"
+    }
   },
   unevaluatedProperties: false
 };
@@ -15305,13 +15335,37 @@ var template_schema_default = {
   title: "template.yml",
   description: "A template's manifest. The same format as `factory.yml`, minus `schemaVersion` and `template`.",
   type: "object",
-  required: ["name", "schemaVersions"],
-  allOf: [{ $ref: "defs.schema.json#/$defs/topLevel" }],
+  required: [
+    "name",
+    "schemaVersions"
+  ],
+  allOf: [
+    {
+      $ref: "defs.schema.json#/$defs/topLevel"
+    }
+  ],
   properties: {
-    name: { type: "string", minLength: 1 },
-    description: { type: "string" },
-    schemaVersions: { type: "array", items: { type: "integer", minimum: 1 }, minItems: 1 },
-    extends: { $ref: "defs.schema.json#/$defs/templateRef" }
+    name: {
+      type: "string",
+      minLength: 1,
+      description: "The template's name."
+    },
+    description: {
+      type: "string",
+      description: "One sentence on what it's for."
+    },
+    schemaVersions: {
+      type: "array",
+      items: {
+        type: "integer",
+        minimum: 1
+      },
+      minItems: 1,
+      description: "The `schemaVersion`s of `factory.yml` it supports."
+    },
+    extends: {
+      $ref: "defs.schema.json#/$defs/templateRef"
+    }
   },
   unevaluatedProperties: false
 };
