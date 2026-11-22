@@ -45,4 +45,4 @@ Gemini and Antigravity are left out until their CI auth and terms are clear.
 
 - `agent:` and `model:` per repo and per task.
 - Each factory release pins every agent CLI's version. Nothing installs "latest" at run time.
-- Each CLI install is cached by its pinned version.
+- Each CLI install is cached by its pinned version. The 15-minute tick installs and saves it on a miss, because scheduled runs may write the cache while label-triggered runs get a read-only one. The jobs that run agents only restore it: a save there would follow agent-written code, which could plant a tampered CLI.

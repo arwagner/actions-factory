@@ -16310,6 +16310,9 @@ async function runRouter(io) {
     io.setOutput("doctor-agents", JSON.stringify(doctorAgents(loaded)));
   }
   let tickReport;
+  if (decision.kind === "sweep") {
+    io.setOutput("warm-agents", JSON.stringify(doctorAgents(loaded).filter((a) => a.cliVersion !== "none")));
+  }
   if (decision.kind === "sweep" && writer) {
     tickReport = await tick({ config: loaded.config, reader, writer, now: io.now ?? /* @__PURE__ */ new Date(), runId: io.runId });
   }

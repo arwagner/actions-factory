@@ -16189,6 +16189,9 @@ function claudeAdapter(options = {}) {
   return {
     name: "claude",
     credentials: CREDENTIALS,
+    async install() {
+      await install();
+    },
     async ping() {
       const env = agentEnv();
       const secrets = CREDENTIALS.map((name) => process.env[name]).filter((v) => Boolean(v));
@@ -16271,6 +16274,9 @@ function codexAdapter(options = {}) {
   return {
     name: "codex",
     credentials: CREDENTIALS2,
+    async install() {
+      await install();
+    },
     async run(input) {
       const binary = await install();
       const { home, env, secrets } = await session(binary);
@@ -16350,6 +16356,9 @@ function copilotAdapter(options = {}) {
   return {
     name: "copilot",
     credentials: CREDENTIALS3,
+    async install() {
+      await install();
+    },
     async run(input) {
       const binary = await install();
       const home = mkdtempSync4(join6(process.env.RUNNER_TEMP ?? tmpdir3(), "factory-copilot-"));
@@ -16616,6 +16625,9 @@ async function runRouter(io) {
     io.setOutput("doctor-agents", JSON.stringify(doctorAgents(loaded)));
   }
   let tickReport;
+  if (decision.kind === "sweep") {
+    io.setOutput("warm-agents", JSON.stringify(doctorAgents(loaded).filter((a) => a.cliVersion !== "none")));
+  }
   if (decision.kind === "sweep" && writer) {
     tickReport = await tick({ config: loaded.config, reader, writer, now: io.now ?? /* @__PURE__ */ new Date(), runId: io.runId });
   }

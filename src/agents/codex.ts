@@ -39,6 +39,9 @@ export function codexAdapter(options: CodexOptions = {}): Adapter {
   return {
     name: "codex",
     credentials: CREDENTIALS,
+    async install() {
+      await install();
+    },
     async run(input) {
       const binary = await install();
       const { home, env, secrets } = await session(binary);

@@ -259,6 +259,8 @@ describe("runRouter", () => {
       ]);
       expect(summary.join("\n")).toContain("`nightly`, scheduled for 2026-11-21T09:00:00.000Z: started");
       expect(outputs.task).toBeUndefined();
+      // The tick also warms the agent CLI cache: scheduled runs may write it, label-triggered ones may not.
+      expect(JSON.parse(outputs["warm-agents"])).toEqual([{ agent: "claude", cliVersion: "2.1.319" }]);
     });
 
     it("starts nothing more once today's runs reach runsPerDay", async () => {

@@ -107,6 +107,10 @@ export async function runRouter(io: RouterIO): Promise<Decision> {
   }
 
   let tickReport: string[] | undefined;
+  if (decision.kind === "sweep") {
+    // Scheduled runs keep cache writes; this tick's warm-agents job installs and saves each pinned CLI on a miss.
+    io.setOutput("warm-agents", JSON.stringify(doctorAgents(loaded).filter((a) => a.cliVersion !== "none")));
+  }
   if (decision.kind === "sweep" && writer) {
     tickReport = await tick({ config: loaded.config as never, reader, writer, now: io.now ?? new Date(), runId: io.runId });
   }
