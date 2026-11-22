@@ -13,6 +13,7 @@ The workflow:
 3. Points the `release-candidate` branch at this commit. The sandbox's stub calls the router there.
 4. Runs the end-to-end scenarios in the sandbox (`scripts/e2e.ts`), one per shipped template, on the `fake` agent.
 5. Only if they all pass: tags `vX.Y.Z`, moves `vX` and `latest` to it, and publishes a GitHub release with notes generated from the merged pull requests.
+6. Publishes the wiki from `docs/wiki/` (`node scripts/wiki.ts`), using this repo's own `FACTORY_TOKEN`. Without that secret, it's skipped with a warning.
 
 A failed scenario stops the release before anything is tagged. The run summary lists each scenario's result.
 

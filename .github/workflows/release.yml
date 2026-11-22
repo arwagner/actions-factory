@@ -27,6 +27,7 @@ jobs:
       VERSION: ${{ inputs.version }}
       # Only whether it's set: the token itself goes to the end-to-end step alone.
       HAS_SANDBOX_TOKEN: ${{ secrets.SANDBOX_TOKEN != '' }}
+      HAS_FACTORY_TOKEN: ${{ secrets.FACTORY_TOKEN != '' }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -79,3 +80,24 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "v$VERSION" --verify-tag --title "v$VERSION" --generate-notes
+
+      # The wiki always describes the newest release (§13). The default token can't push to a wiki, so this uses
+      # the repo's own FACTORY_TOKEN. The wiki's first page was created by hand, as GitHub requires.
+      - name: Publish the wiki
+        if: env.HAS_FACTORY_TOKEN == 'true'
+        env:
+          FACTORY_TOKEN: ${{ secrets.FACTORY_TOKEN }}
+        run: |
+          out="$RUNNER_TEMP/wiki"
+          auth="Authorization: Basic $(printf 'x-access-token:%s' "$FACTORY_TOKEN" | base64 -w0)"
+          git -c http.extraHeader="$auth" clone -q "https://github.com/$GITHUB_REPOSITORY.wiki.git" "$out"
+          find "$out" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          node scripts/wiki.ts "$out" "$VERSION"
+          git -C "$out" add -A
+          if git -C "$out" diff --cached --quiet; then exit 0; fi
+          git -C "$out" -c user.name=actions-factory -c user.email=actions-factory@users.noreply.github.com commit -qm "v$VERSION"
+          git -C "$out" -c http.extraHeader="$auth" push -q origin HEAD
+
+      - name: Note the unpublished wiki
+        if: env.HAS_FACTORY_TOKEN != 'true'
+        run: echo "::warning::This repo has no FACTORY_TOKEN secret, so the wiki wasn't published."
