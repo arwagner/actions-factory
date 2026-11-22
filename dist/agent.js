@@ -15190,7 +15190,12 @@ var fakeAdapter = {
 `);
       return { status: "failed" };
     }
-    const script = JSON.parse(readFileSync4(file, "utf8"));
+    const script = pickCase(JSON.parse(readFileSync4(file, "utf8")), readFileSync4(input.promptFile, "utf8"));
+    if (!script) {
+      writeFileSync4(input.transcriptFile, `${JSON.stringify({ type: "error", message: `no case in ${file} matches the prompt` })}
+`);
+      return { status: "failed" };
+    }
     for (const [path, content] of Object.entries(script.files ?? {})) {
       if (input.permission === "read-only") break;
       mkdirSync3(dirname3(join5(input.checkout, path)), { recursive: true });
@@ -15202,6 +15207,24 @@ var fakeAdapter = {
     return { status: "ok", usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 } };
   }
 };
+function pickCase(script, prompt) {
+  if (!script.cases) return script;
+  for (const c of script.cases) {
+    const match = new RegExp(c.promptMatch).exec(prompt);
+    if (!match) continue;
+    const capture = match[1] ?? "";
+    const fill = (value) => {
+      if (value === "$1") return /^\d+$/.test(capture) ? Number(capture) : capture;
+      if (typeof value === "string") return value.replaceAll("$1", capture);
+      if (Array.isArray(value)) return value.map(fill);
+      if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, fill(v)]));
+      return value;
+    };
+    const files2 = c.files ? Object.fromEntries(Object.entries(c.files).map(([k, v]) => [k.replaceAll("$1", capture), v])) : void 0;
+    return { plan: fill(c.plan), files: files2 };
+  }
+  return void 0;
+}
 
 // src/agents/index.ts
 var ADAPTERS = { claude: claudeAdapter(), codex: codexAdapter(), copilot: copilotAdapter(), fake: fakeAdapter };
@@ -15500,6 +15523,14 @@ var defs_schema_default = {
           default: true,
           description: "Checks must pass before a push."
         },
+        branch: {
+          enum: [
+            "run",
+            "subject"
+          ],
+          default: "run",
+          description: "Where an issue task pushes: a new branch per run (`agent/issue-<n>-<run>`), or one branch per issue (`agent/issue-<n>`) that every run continues."
+        },
         turns: {
           type: "integer",
           minimum: 1,
@@ -15738,6 +15769,9 @@ function checkHardRules(config) {
       if ((task.subject === "issue" || task.subject === "pr") && task.schedule.subject === void 0) {
         errors.push({ path: at("schedule.subject"), message: `a scheduled ${task.subject} task needs the number of the ${task.subject === "pr" ? "pull request" : "issue"} it's about` });
       }
+    }
+    if (task.branch === "subject" && task.subject !== "issue") {
+      errors.push({ path: at("branch"), message: "`subject` branches are for issue tasks; a PR task always works on the PR's own branch" });
     }
     if (task.query !== void 0 && task.subject !== "batch") {
       errors.push({ path: at("query"), message: "allowed only with subject: batch" });
@@ -16159,6 +16193,14 @@ function gitHubApi(token, owner, repo, baseUrl = "https://api.github.com") {
         baseRepo: pull.base.repo.full_name
       };
     },
+    async branchSha(name) {
+      const branch = await call("GET", `/branches/${enc(name)}`, void 0, [404]);
+      return branch?.commit.sha;
+    },
+    async findOpenPull(head) {
+      const pulls = await call("GET", `/pulls?state=open&head=${enc(`${owner}:${head}`)}`);
+      return pulls[0]?.number;
+    },
     async createPull(pull) {
       return (await call("POST", "/pulls", pull)).number;
     },
@@ -16338,6 +16380,7 @@ var STATUS_MARKER = "<!-- factory:status";
 function buildPrompt(input) {
   const parts = [input.prompt.trim()];
   if (input.instructions) parts.push(input.instructions.trim());
+  if (input.context?.trim()) parts.push(["## Context from the template", "", input.context.trim()].join("\n"));
   if (input.items.length > 0) {
     parts.push(
       [
@@ -16397,6 +16440,14 @@ var files = (workDir) => ({
 async function prepare(io) {
   const f = files(io.workDir);
   mkdirSync5(io.workDir, { recursive: true });
+  if (io.task.hooks?.before) {
+    const subject = "number" in io.subject ? io.subject.number : "origin" in io.subject ? io.subject.origin : void 0;
+    await io.runHook(io.task.hooks.before, {
+      FACTORY_TASK: io.task.name,
+      FACTORY_WORK_DIR: io.workDir,
+      FACTORY_SUBJECT: subject === void 0 ? "" : String(subject)
+    });
+  }
   const { items, batchNumbers } = await gatherSubject(io);
   const planSchema = io.task.planSchema ? JSON.parse(readFileSync6(io.task.planSchema, "utf8")) : void 0;
   const ctxSubject = io.subject.kind === "batch" ? { kind: "batch", numbers: batchNumbers ?? [] } : io.subject;
@@ -16408,14 +16459,12 @@ async function prepare(io) {
     outcomes: Object.keys(io.task.outcomes),
     checks: io.task.checks,
     planFile: f.plan,
-    planSchemaFile: f.planSchema
+    planSchemaFile: f.planSchema,
+    context: existsSync7(join8(io.workDir, "context.md")) ? readFileSync6(join8(io.workDir, "context.md"), "utf8") : void 0
   };
   writeFileSync5(f.prompt, buildPrompt(promptInput));
   const base = (await git("git", ["rev-parse", "HEAD"], { cwd: io.checkout })).stdout.trim();
   saveState(io, { base, promptInput, batchNumbers, agentStatus: "not-run", turnsRun: 0 });
-  if (io.task.hooks?.before) {
-    await io.runHook(io.task.hooks.before, { FACTORY_TASK: io.task.name, FACTORY_WORK_DIR: io.workDir });
-  }
 }
 async function runTurn(io, turn) {
   const state = loadState(io);

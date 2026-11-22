@@ -38,6 +38,8 @@ The factory validates the plan against the task. An outcome not on the list, or 
 - `before` prepares inputs. For example, ratchet picks a file at random, and explore gathers the batch.
 - `after` turns the plan into writes or the next step. For example, implement-spec queues tickets.
 - Hooks run in the factory's jobs, never inside the agent. A `before` hook runs in the agent job before the agent, without the agent credential. An `after` hook runs in the apply job and holds `FACTORY_TOKEN`.
+- **`before`** runs first, before the prompt is built, with the default token (read). It gets `FACTORY_TASK`, `FACTORY_SUBJECT` (the item's number, or the origin's) and `FACTORY_WORK_DIR`. Whatever it writes to `$FACTORY_WORK_DIR/context.md` goes into the prompt, under "Context from the template".
+- **`after`** runs last, once every write is made. It gets `FACTORY_TASK`, `FACTORY_TASK_LABEL`, `FACTORY_OUTCOME`, `FACTORY_PLAN` (the plan as JSON), `FACTORY_SUBJECT`, `FACTORY_PULL_REQUEST` (if the run opened or reused one) and `FACTORY_CREATED_ISSUES` (the numbers of the issues it created, in plan order).
 
 ## Outcomes and chaining
 

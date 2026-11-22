@@ -9,6 +9,8 @@ export class FakeGitHub {
   /** Who added a label, keyed `number:label`, as the issue events API reports it. */
   labelers: Record<string, string> = {};
   ticks: Array<{ id: number; createdAt: string; conclusion: string | null }> = [];
+  branches: Record<string, string> = {};
+  openPulls: Record<string, number> = {};
   /** What `probeAccess` reports, per token. Defaults to everything allowed. */
   access: Record<string, Partial<{ read: number; contents: number; issues: number; pullRequests: number }>> = {};
   search: Array<{ number: number; title: string; body: string }> = [];
@@ -81,6 +83,8 @@ export class FakeGitHub {
         const pull = this.pulls[number] ?? { head: "feature", mergeable: false };
         return { pending: false, head: pull.head, mergeable: pull.mergeable, ...(pull.pending === undefined ? {} : { pending: pull.pending }) };
       },
+      branchSha: async (name) => this.branches[name],
+      findOpenPull: async (head) => this.openPulls[head],
       pullInfo: async (number) => {
         const pull = this.pulls[number] ?? { head: "feature", mergeable: false };
         return { head: pull.head, headSha: "headsha", base: "main", headRepo: pull.headRepo === undefined ? "o/r" : pull.headRepo, baseRepo: "o/r" };

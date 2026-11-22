@@ -30,6 +30,7 @@ Field names are camelCase. `factory.yml` lives at the client repo's root.
 |---|---|---|
 | `label` | string starting with `agent:` | none (schedule-only task) |
 | `subject` | `issue`, `pr`, `batch`, `repo` | required |
+| `branch` | `run` (a new `agent/issue-<n>-<run>` per run) or `subject` (one `agent/issue-<n>` that every run continues, reusing its open PR); issue tasks only | `run` |
 | `query` | issue search query (with `subject: batch`) | none |
 | `schedule` | `{cron, subject?}`: five-field cron, in `timezone`; `subject` is the number of the issue or PR the run is about (required for `issue` and `pr` tasks), where its refusals and failures go | none |
 | `prompt` | path | required |

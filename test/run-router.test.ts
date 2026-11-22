@@ -115,6 +115,21 @@ describe("runRouter", () => {
     expect(outputs["base-ref"]).toBe("main");
   });
 
+  it("hands a `branch: subject` task its issue's branch once it exists, to continue from", async () => {
+    const factoryRoot = tree({
+      "templates/default/template.yml": template.replace("    subject: issue\n", "    subject: issue\n    branch: subject\n"),
+      "package.json": '{"version":"1.2.0"}',
+    });
+
+    await runRouter(io({ factoryRoot }));
+    expect(outputs["head-sha"]).toBeUndefined();
+
+    gh.branches["agent/issue-42"] = "spec-branch-sha";
+    await runRouter(io({ factoryRoot }));
+    expect(outputs["head-sha"]).toBe("spec-branch-sha");
+    expect(outputs["base-ref"]).toBe("main");
+  });
+
   it("refuses a label added by someone without write access, and takes the label off", async () => {
     const decision = await runRouter(
       io({ payload: { action: "labeled", label: { name: "agent:implement" }, issue: { number: 42 }, sender: { login: "tri" } } }),

@@ -34,6 +34,10 @@ export interface GitHubApi {
   getPull(number: number): Promise<{ head: string; mergeable: boolean; pending: boolean }>;
   /** A PR's branches, commits and repos, without its checks: the default token can read this. */
   pullInfo(number: number): Promise<{ head: string; headSha: string; base: string; headRepo: string | null; baseRepo: string }>;
+  /** The commit a branch points at, or undefined if there's no such branch. */
+  branchSha(name: string): Promise<string | undefined>;
+  /** The open PR from `head` (a branch in this repo), if any. */
+  findOpenPull(head: string): Promise<number | undefined>;
   createPull(pull: { title: string; body: string; head: string; base: string; draft: boolean }): Promise<number>;
   /** Merges with a merge commit. Throws if GitHub refuses. */
   mergePull(number: number): Promise<void>;
@@ -205,6 +209,14 @@ export function gitHubApi(token: string, owner: string, repo: string, baseUrl = 
         headRepo: pull.head.repo?.full_name ?? null,
         baseRepo: pull.base.repo.full_name,
       };
+    },
+    async branchSha(name) {
+      const branch = (await call("GET", `/branches/${enc(name)}`, undefined, [404])) as { commit: { sha: string } } | undefined;
+      return branch?.commit.sha;
+    },
+    async findOpenPull(head) {
+      const pulls = (await call("GET", `/pulls?state=open&head=${enc(`${owner}:${head}`)}`)) as Array<{ number: number }>;
+      return pulls[0]?.number;
     },
     async createPull(pull) {
       return ((await call("POST", "/pulls", pull)) as { number: number }).number;

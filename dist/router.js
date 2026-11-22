@@ -14972,6 +14972,14 @@ function gitHubApi(token, owner, repo, baseUrl = "https://api.github.com") {
         baseRepo: pull.base.repo.full_name
       };
     },
+    async branchSha(name) {
+      const branch = await call("GET", `/branches/${enc(name)}`, void 0, [404]);
+      return branch?.commit.sha;
+    },
+    async findOpenPull(head) {
+      const pulls = await call("GET", `/pulls?state=open&head=${enc(`${owner}:${head}`)}`);
+      return pulls[0]?.number;
+    },
     async createPull(pull) {
       return (await call("POST", "/pulls", pull)).number;
     },
@@ -15329,6 +15337,14 @@ var defs_schema_default = {
           default: true,
           description: "Checks must pass before a push."
         },
+        branch: {
+          enum: [
+            "run",
+            "subject"
+          ],
+          default: "run",
+          description: "Where an issue task pushes: a new branch per run (`agent/issue-<n>-<run>`), or one branch per issue (`agent/issue-<n>`) that every run continues."
+        },
         turns: {
           type: "integer",
           minimum: 1,
@@ -15599,6 +15615,9 @@ function checkHardRules(config) {
       if ((task.subject === "issue" || task.subject === "pr") && task.schedule.subject === void 0) {
         errors.push({ path: at("schedule.subject"), message: `a scheduled ${task.subject} task needs the number of the ${task.subject === "pr" ? "pull request" : "issue"} it's about` });
       }
+    }
+    if (task.branch === "subject" && task.subject !== "issue") {
+      errors.push({ path: at("branch"), message: "`subject` branches are for issue tasks; a PR task always works on the PR's own branch" });
     }
     if (task.query !== void 0 && task.subject !== "batch") {
       errors.push({ path: at("query"), message: "allowed only with subject: batch" });
@@ -16319,6 +16338,12 @@ async function runRouter(io) {
       const pull = await reader.pullInfo(decision.subject.number);
       io.setOutput("head-sha", pull.headSha);
       io.setOutput("base-ref", pull.base);
+    } else if (decision.subject.kind === "issue" && taskBranch(loaded.config, decision.task) === "subject") {
+      const sha = await reader.branchSha(`agent/issue-${decision.subject.number}`);
+      if (sha) {
+        io.setOutput("head-sha", sha);
+        io.setOutput("base-ref", await reader.defaultBranch());
+      }
     }
   }
   return decision;
@@ -16457,6 +16482,9 @@ function headline(decision) {
     case "ignore":
       return `nothing to do: ${decision.reason}`;
   }
+}
+function taskBranch(config, task) {
+  return config.tasks[task].branch;
 }
 function agentJobSettings(config, taskName) {
   const task = config.tasks[taskName];

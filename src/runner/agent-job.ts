@@ -81,6 +81,15 @@ const files = (workDir: string) => ({
 export async function prepare(io: AgentJobIO): Promise<void> {
   const f = files(io.workDir);
   mkdirSync(io.workDir, { recursive: true });
+  // The before hook runs first: what it writes to context.md goes into the prompt (the next ticket, a picked entry).
+  if (io.task.hooks?.before) {
+    const subject = "number" in io.subject ? io.subject.number : "origin" in io.subject ? io.subject.origin : undefined;
+    await io.runHook(io.task.hooks.before, {
+      FACTORY_TASK: io.task.name,
+      FACTORY_WORK_DIR: io.workDir,
+      FACTORY_SUBJECT: subject === undefined ? "" : String(subject),
+    });
+  }
   const { items, batchNumbers } = await gatherSubject(io);
   const planSchema = io.task.planSchema ? JSON.parse(readFileSync(io.task.planSchema, "utf8")) : undefined;
   const ctxSubject = io.subject.kind === "batch" ? { kind: "batch" as const, numbers: batchNumbers ?? [] } : io.subject;
@@ -91,15 +100,13 @@ export async function prepare(io: AgentJobIO): Promise<void> {
     items,
     outcomes: Object.keys(io.task.outcomes),
     checks: io.task.checks,
-      planFile: f.plan,
-      planSchemaFile: f.planSchema,
+    planFile: f.plan,
+    planSchemaFile: f.planSchema,
+    context: existsSync(join(io.workDir, "context.md")) ? readFileSync(join(io.workDir, "context.md"), "utf8") : undefined,
   };
   writeFileSync(f.prompt, buildPrompt(promptInput));
   const base = (await git("git", ["rev-parse", "HEAD"], { cwd: io.checkout })).stdout.trim();
   saveState(io, { base, promptInput, batchNumbers, agentStatus: "not-run", turnsRun: 0 });
-  if (io.task.hooks?.before) {
-    await io.runHook(io.task.hooks.before, { FACTORY_TASK: io.task.name, FACTORY_WORK_DIR: io.workDir });
-  }
 }
 
 /** One round of the agent. Skipped when an earlier round's checks passed or the agent already failed. */
@@ -130,8 +137,8 @@ export async function runTurn(io: AgentJobIO, turn: number): Promise<void> {
       checkout: io.checkout,
       promptFile: f.prompt,
       skills: io.task.skills,
-    planSchemaFile: f.planSchema,
-    planFile: f.plan,
+      planSchemaFile: f.planSchema,
+      planFile: f.plan,
       permission: io.task.permission,
       model: io.task.model,
       timeoutMinutes: io.task.timeout,

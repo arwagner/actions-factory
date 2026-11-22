@@ -249,6 +249,14 @@
           "default": true,
           "description": "Checks must pass before a push."
         },
+        "branch": {
+          "enum": [
+            "run",
+            "subject"
+          ],
+          "default": "run",
+          "description": "Where an issue task pushes: a new branch per run (`agent/issue-<n>-<run>`), or one branch per issue (`agent/issue-<n>`) that every run continues."
+        },
         "turns": {
           "type": "integer",
           "minimum": 1,
