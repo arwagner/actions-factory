@@ -6,3 +6,5 @@ checks:
   - npm ci
   - npm run lint
   - npm test
+  # Last: rebuilds the committed dist/ so the agent's work ships with it.
+  - npm run build
