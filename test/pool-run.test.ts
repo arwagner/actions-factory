@@ -108,6 +108,18 @@ describe("failover", () => {
     expect(run.authFile()).toBeUndefined();
     expect(readLeases(d.dir)!.leases.map((l) => [l.alias, l.status])).toEqual([[first, "quota"], [second, "quota"]]);
   });
+
+  it("doesn't wait for logins this run set aside itself", async () => {
+    const { store, secrets } = pool(A);
+    let slept = 0;
+    const d = deps(store, { sleep: async () => { slept++; } });
+    await capture(d, secrets, false);
+    const run = poolRun(d)!;
+    run.settle("quota");
+    expect(await run.next(600_000)).toBe(false);
+    expect(slept).toBe(0);
+    expect(run.unavailable()).toMatch(/already tried by this run/);
+  });
 });
 
 describe("handoff and save back", () => {

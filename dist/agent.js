@@ -18863,7 +18863,8 @@ async function acquire(deps, budgetMs) {
     const { state } = await store.read();
     const accounts = Object.values(state.accounts);
     if (accounts.length === 0) return "the Codex login pool is empty";
-    if (!accounts.some((a2) => a2.lease)) return "every Codex login in the pool is quarantined; run `node dist/pool.js check` and recover them";
+    const heldByOthers = accounts.some((a2) => a2.lease && !(a2.lease.runId === deps.owner.runId && a2.lease.attempt === deps.owner.attempt));
+    if (!heldByOthers) return "every Codex login in the pool is quarantined or already tried by this run; run `node dist/pool.js check` and recover them";
     if (now() >= until) return `every Codex login is in use by another run${give > 0 ? ` (waited ${Math.round(give / 1e3)} s)` : ""}; add another login to the pool or try again later`;
     await sleep(Math.min(deps.pollMs ?? 15e3, Math.max(0, until - now())));
   }
