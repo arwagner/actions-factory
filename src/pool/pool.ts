@@ -16,6 +16,8 @@ export interface Account {
   sessionId: string;
   /** SHA-256 of the current credential: the generation. Never the credential itself. */
   hash: string;
+  /** SHA-256 of the refresh token the login was seeded with, to refuse a copy of it. Never the token itself. */
+  seedHash?: string;
   /** Relative chance of being picked by `claim`. Default 1. */
   weight?: number;
   lease?: Owner;
