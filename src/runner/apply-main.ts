@@ -7,6 +7,7 @@ import { gitHubApi } from "../router/github.js";
 import type { Decision } from "../router/route.js";
 import { type ApplyTask, applyRun } from "./apply.js";
 import { bundledWork } from "./bundle.js";
+import { withoutNulls } from "./plan.js";
 import type { HandoffMeta } from "./handoff.js";
 import { renderApplySummary } from "./summary.js";
 
@@ -37,7 +38,11 @@ async function main(): Promise<void> {
   const task = (loaded.config.tasks as Record<string, ApplyTask & { planSchema?: string }>)[decision.task];
 
   const readJson = (path: string) => (existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : undefined);
-  const meta: HandoffMeta = readJson(join(handoff, "meta.json")) ?? { agentStatus: "failed", checksPassed: false };
+  const meta: HandoffMeta = readJson(join(handoff, "meta.json")) ?? {
+    agentStatus: "failed",
+    checksPassed: false,
+    agentError: "the agent's results never reached this job: downloading the handoff artifact failed.",
+  };
   const server = env("GITHUB_SERVER_URL") ?? "https://github.com";
   const runUrl = `${server}/${owner}/${repo}/actions/runs/${required("GITHUB_RUN_ID")}`;
 
@@ -47,7 +52,7 @@ async function main(): Promise<void> {
     subject: decision.subject,
     batchNumbers: meta.batchNumbers,
     planSchema: task.planSchema ? readJson(task.planSchema) : undefined,
-    plan: readJson(join(handoff, "plan.json")),
+    plan: withoutNulls(readJson(join(handoff, "plan.json"))),
     agentStatus: meta.agentStatus,
     agentError: meta.agentError,
     checksPassed: meta.checksPassed,

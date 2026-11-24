@@ -16406,7 +16406,7 @@ var SINGLE_FIELDS = {
     additionalProperties: false,
     required: ["title", "body"],
     properties: { title: { type: "string" }, body: { type: "string" } },
-    description: "Open a pull request from the pushed branch."
+    description: "Open a pull request from the pushed branch. Required when you changed files and the task opens pull requests."
   },
   closeIssue: { type: "boolean", description: "Close the subject issue." },
   createIssues: {
@@ -16431,7 +16431,9 @@ var ITEM_FIELDS = {
 var ajv2 = new import__2.Ajv2020({ allErrors: true, strict: false });
 function planJsonSchema(ctx) {
   const extras = ctx.planSchema?.properties ?? {};
+  const outcome = ctx.outcomes ? { ...SINGLE_FIELDS.outcome, enum: ctx.outcomes } : SINGLE_FIELDS.outcome;
   if (ctx.subject.kind === "batch") {
+    const { number, outcome: _2, ...rest2 } = ITEM_FIELDS;
     return {
       type: "object",
       additionalProperties: false,
@@ -16439,12 +16441,26 @@ function planJsonSchema(ctx) {
       properties: {
         items: {
           type: "array",
-          items: { type: "object", additionalProperties: false, required: ["number", "outcome"], properties: { ...ITEM_FIELDS, ...extras } }
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["number", "outcome", ...Object.keys(rest2)],
+            properties: { number, outcome, ...nullable(rest2), ...extras }
+          }
         }
       }
     };
   }
-  return { type: "object", additionalProperties: false, required: ["outcome"], properties: { ...SINGLE_FIELDS, ...extras } };
+  const { outcome: _, ...rest } = SINGLE_FIELDS;
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: ["outcome", ...Object.keys(rest)],
+    properties: { outcome, ...nullable(rest), ...extras }
+  };
+}
+function nullable(fields) {
+  return Object.fromEntries(Object.entries(fields).map(([key, field]) => [key, { ...field, type: [field.type, "null"] }]));
 }
 
 // src/runner/prompt.ts
@@ -16523,7 +16539,7 @@ async function prepare(io) {
   const { items, batchNumbers } = await gatherSubject(io);
   const planSchema = io.task.planSchema ? JSON.parse(readFileSync6(io.task.planSchema, "utf8")) : void 0;
   const ctxSubject = io.subject.kind === "batch" ? { kind: "batch", numbers: batchNumbers ?? [] } : io.subject;
-  writeFileSync5(f.planSchema, JSON.stringify(planJsonSchema({ subject: ctxSubject, planSchema }), null, 2));
+  writeFileSync5(f.planSchema, JSON.stringify(planJsonSchema({ subject: ctxSubject, planSchema, outcomes: Object.keys(io.task.outcomes) }), null, 2));
   const promptInput = {
     prompt: readFileSync6(io.task.prompt, "utf8"),
     instructions: io.task.instructions,

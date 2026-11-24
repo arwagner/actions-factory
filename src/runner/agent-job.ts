@@ -93,7 +93,7 @@ export async function prepare(io: AgentJobIO): Promise<void> {
   const { items, batchNumbers } = await gatherSubject(io);
   const planSchema = io.task.planSchema ? JSON.parse(readFileSync(io.task.planSchema, "utf8")) : undefined;
   const ctxSubject = io.subject.kind === "batch" ? { kind: "batch" as const, numbers: batchNumbers ?? [] } : io.subject;
-  writeFileSync(f.planSchema, JSON.stringify(planJsonSchema({ subject: ctxSubject, planSchema }), null, 2));
+  writeFileSync(f.planSchema, JSON.stringify(planJsonSchema({ subject: ctxSubject, planSchema, outcomes: Object.keys(io.task.outcomes) }), null, 2));
   const promptInput: PromptInput = {
     prompt: readFileSync(io.task.prompt, "utf8"),
     instructions: io.task.instructions,
