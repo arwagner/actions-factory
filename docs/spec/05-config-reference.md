@@ -57,6 +57,7 @@ Field names are camelCase. `factory.yml` lives at the client repo's root.
 
 - `writes.merge` is valid only on a task whose trigger is a label that a person adds.
 - No outcome or write may add `agent:merge`.
+- A plan whose outcome has `waitsOnPerson` must carry a non-empty `comment` saying what the person has to decide or do, when the task may comment. Without one, the plan is refused.
 - Pushes go only to `agent/*` branches, never with force, never to the default branch.
 - A label that triggers a task must start with `agent:`.
 

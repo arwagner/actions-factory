@@ -53,6 +53,19 @@ describe("validatePlan", () => {
     ]);
   });
 
+  it("requires a comment saying why, for an outcome that waits on a person", () => {
+    const waiting = task({ outcomes: { done: {}, "needs-a-human": { waitsOnPerson: true } } });
+
+    expect(validatePlan({ outcome: "needs-a-human" }, waiting, issue).errors).toEqual([
+      { path: "comment", message: "needs-a-human waits on a person, so say in a comment what they have to decide or do" },
+    ]);
+    expect(validatePlan({ outcome: "needs-a-human", comment: "  " }, waiting, issue).ok).toBe(false);
+    expect(validatePlan({ outcome: "needs-a-human", comment: "Pick a lease store." }, waiting, issue).ok).toBe(true);
+    expect(validatePlan({ outcome: "done" }, waiting, issue).ok).toBe(true);
+    // A task that can't comment can't explain, so it isn't asked to.
+    expect(validatePlan({ outcome: "needs-a-human" }, { ...waiting, writes: { ...writes, comment: false } }, issue).ok).toBe(true);
+  });
+
   it("accepts the extra fields a task's planSchema declares, validated by it", () => {
     const planSchema = { type: "object", properties: { confidence: { type: "number", maximum: 1 } } };
 
