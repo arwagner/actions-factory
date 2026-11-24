@@ -145,6 +145,7 @@ export async function runTurn(io: AgentJobIO, turn: number): Promise<void> {
       transcriptFile: f.transcript,
       turn,
       task: io.task.name,
+      ...(io.env.CODEX_AUTH_FILE ? { authFile: io.env.CODEX_AUTH_FILE } : {}),
     });
   } catch (error) {
     // The adapter itself broke (not the agent timing out): say so rather than leave the provisional timed-out.
@@ -153,6 +154,7 @@ export async function runTurn(io: AgentJobIO, turn: number): Promise<void> {
     saveState(io, { ...state, agentStatus: "failed", checksPassed: undefined, turnsRun: turn, agentError });
     return;
   }
+  if (result.failure) io.log(`::warning::the ${adapter.name} run failed on ${result.failure === "auth" ? "an auth error: the login is bad" : "a quota or rate limit: try another login"}`);
   saveState(io, {
     ...state,
     agentStatus: result.status,

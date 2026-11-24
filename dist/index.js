@@ -16315,21 +16315,37 @@ async function installPinned2() {
 
 // src/agents/codex.ts
 import { execFile as execFile3 } from "node:child_process";
-import { cpSync as cpSync2, existsSync as existsSync4, mkdtempSync as mkdtempSync3, readFileSync as readFileSync3, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { chmodSync, cpSync as cpSync2, existsSync as existsSync4, mkdtempSync as mkdtempSync3, readFileSync as readFileSync3, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import { tmpdir as tmpdir2 } from "node:os";
 import { dirname as dirname2, join as join5 } from "node:path";
 var CODEX_VERSION = "0.167.0";
-var CREDENTIALS2 = ["OPENAI_API_KEY", "CODEX_ACCESS_TOKEN"];
+var CREDENTIALS2 = ["OPENAI_API_KEY", "CODEX_ACCESS_TOKEN", "CODEX_AUTH_FILE"];
+function classifyFailure(text) {
+  if (/usage[_ ]limit|rate[_ -]?limit|quota|\b429\b|too many requests|insufficient_quota|hit your .*limit/i.test(text)) return "quota";
+  if (/\b401\b|unauthori[sz]ed|invalid[_ ](api[_ ])?(key|token|credential|grant)|(token|session|login|credentials?).{0,40}(expired|revoked|invalid|was already used|reused)|refresh token|log ?in again|sign ?in again|not logged in|authentication/i.test(text)) return "auth";
+  return void 0;
+}
+function errorText(events) {
+  return events.flatMap((e) => [e.message, e.error?.message]).filter((m) => typeof m === "string").join("\n");
+}
 function codexAdapter(options = {}) {
   const install = options.install ?? (() => installPinned("codex", "@openai/codex", CODEX_VERSION, "codex"));
-  async function session(binary) {
+  async function session(binary, authFile) {
     const home = mkdtempSync3(join5(process.env.RUNNER_TEMP ?? tmpdir2(), "factory-codex-"));
     const apiKey = process.env.OPENAI_API_KEY;
     const accessToken = process.env.CODEX_ACCESS_TOKEN;
     const secrets = [apiKey, accessToken].filter((v) => Boolean(v));
     const env = agentEnv({ CODEX_HOME: home, ...apiKey ? { CODEX_API_KEY: apiKey } : {} }, CREDENTIALS2);
+    delete env.CODEX_AUTH_FILE;
     if (!apiKey && accessToken) await login(binary, env, accessToken);
-    return { home, env, secrets };
+    const leased = !apiKey && !accessToken && Boolean(authFile);
+    if (leased) {
+      const auth = readFileSync3(authFile, "utf8");
+      writeFileSync2(join5(home, "auth.json"), auth, { mode: 384 });
+      chmodSync(join5(home, "auth.json"), 384);
+      secrets.push(...authSecrets(auth));
+    }
+    return { home, env, secrets, leased };
   }
   return {
     name: "codex",
@@ -16339,7 +16355,7 @@ function codexAdapter(options = {}) {
     },
     async run(input) {
       const binary = await install();
-      const { home, env, secrets } = await session(binary);
+      const { home, env, secrets, leased } = await session(binary, input.authFile);
       try {
         for (const [name, path] of Object.entries(input.skills)) cpSync2(path, join5(home, "skills", name), { recursive: true });
         const lastMessage2 = join5(home, "last-message.txt");
@@ -16358,7 +16374,13 @@ function codexAdapter(options = {}) {
         const events = jsonLines(stdout);
         const failed = events.some((e) => e.type === "turn.failed");
         const status = timedOut ? "timed-out" : code !== 0 || failed ? "failed" : "ok";
-        return { status, usage: usage(events) };
+        const result = { status, usage: usage(events) };
+        if (status === "failed") {
+          const failure = classifyFailure(errorText(events));
+          if (failure) result.failure = failure;
+        }
+        if (leased) result.auth = handBack(input.authFile, join5(home, "auth.json"));
+        return result;
       } finally {
         rmSync2(home, { recursive: true, force: true });
       }
@@ -16379,6 +16401,28 @@ function codexAdapter(options = {}) {
       }
     }
   };
+}
+function handBack(leasedPath, homeAuth) {
+  const before = readFileSync3(leasedPath, "utf8");
+  if (!existsSync4(homeAuth)) return { path: leasedPath, changed: false };
+  const after = readFileSync3(homeAuth, "utf8");
+  if (after === before) return { path: leasedPath, changed: false };
+  writeFileSync2(leasedPath, after, { mode: 384 });
+  chmodSync(leasedPath, 384);
+  return { path: leasedPath, changed: true };
+}
+function authSecrets(auth) {
+  const found = [];
+  const walk = (v) => {
+    if (typeof v === "string") {
+      if (v.length >= 8 && !/^\d{4}-\d\d-\d\d/.test(v)) found.push(v);
+    } else if (v && typeof v === "object") Object.values(v).forEach(walk);
+  };
+  try {
+    walk(JSON.parse(auth));
+  } catch {
+  }
+  return found;
 }
 function login(binary, env, token) {
   return new Promise((resolve2, reject) => {
@@ -17547,7 +17591,8 @@ async function runTurn(io, turn) {
       timeoutMinutes: io.task.timeout,
       transcriptFile: f.transcript,
       turn,
-      task: io.task.name
+      task: io.task.name,
+      ...io.env.CODEX_AUTH_FILE ? { authFile: io.env.CODEX_AUTH_FILE } : {}
     });
   } catch (error) {
     const agentError = `the ${adapter.name} adapter failed: ${error instanceof Error ? error.message : String(error)}`;
@@ -17555,6 +17600,7 @@ async function runTurn(io, turn) {
     saveState(io, { ...state, agentStatus: "failed", checksPassed: void 0, turnsRun: turn, agentError });
     return;
   }
+  if (result.failure) io.log(`::warning::the ${adapter.name} run failed on ${result.failure === "auth" ? "an auth error: the login is bad" : "a quota or rate limit: try another login"}`);
   saveState(io, {
     ...state,
     agentStatus: result.status,

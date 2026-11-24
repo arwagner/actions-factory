@@ -55,6 +55,8 @@ A client can run Codex on its own ChatGPT subscription logins. This reverses the
 - **Leases.** A run leases one login from the pool. Lease state lives on the `factory-auth-state` branch, so two runs never share a login.
 - **Saving back.** Codex refreshes and rewrites `auth.json`, so the refreshed login must be saved. A separate job does it, using `CODEX_POOL_TOKEN`. The agent job never holds that token.
 - **Encrypted handoff.** The refreshed login passes from the agent job to the saving job encrypted, never as a plain artifact.
+- **The adapter (part 4).** With a leased `auth.json` path handed in (`authFile`, from the job's `CODEX_AUTH_FILE`), the adapter writes it into the temporary `CODEX_HOME` as `auth.json`, mode 0600, never in the checkout, and scrubs its token values from the transcript. After the run it writes the home's `auth.json` back over the leased path and reports `auth: { path, changed }`. A failed run reports `failure: "auth"` (the login is bad: quarantine it) or `"quota"` (a usage or rate limit: try another login), classified from Codex's error text; anything unrecognised reports neither.
+- **Precedence.** `OPENAI_API_KEY` first, then `CODEX_ACCESS_TOKEN`, then a leased login. An explicit key or token the client set on purpose keeps working exactly as before, and a leased login is used only when neither is set.
 - **Quarantine.** A login that fails, or can't be saved back, is quarantined and leaves the pool until a person recovers it.
 
 **Why the old line is reversed.** The old objection was a write-back loop needing a token able to write secrets. That token (`CODEX_POOL_TOKEN`) is now the client's own, is never in the agent job, and is limited to environment secrets. It can't reach repo contents, other secrets or workflows.

@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { agentEnv, installPinned, jsonLines, planFromMessage, READ_ONLY_PLAN, runCli } from "./cli.js";
@@ -9,7 +9,25 @@ import type { Adapter, AdapterOutput } from "./types.js";
 /** Pinned per factory release; nothing installs "latest" at run time (§6). */
 export const CODEX_VERSION = "0.167.0";
 
-const CREDENTIALS = ["OPENAI_API_KEY", "CODEX_ACCESS_TOKEN"];
+const CREDENTIALS = ["OPENAI_API_KEY", "CODEX_ACCESS_TOKEN", "CODEX_AUTH_FILE"];
+
+/**
+ * Tells why a run failed from Codex's error text. Quota is checked first: "rate limit" and "usage limit" are
+ * unambiguous, while auth wording ("401", "token") also shows up in unrelated messages.
+ */
+export function classifyFailure(text: string): "auth" | "quota" | undefined {
+  if (/usage[_ ]limit|rate[_ -]?limit|quota|\b429\b|too many requests|insufficient_quota|hit your .*limit/i.test(text)) return "quota";
+  if (/\b401\b|unauthori[sz]ed|invalid[_ ](api[_ ])?(key|token|credential|grant)|(token|session|login|credentials?).{0,40}(expired|revoked|invalid|was already used|reused)|refresh token|log ?in again|sign ?in again|not logged in|authentication/i.test(text)) return "auth";
+  return undefined;
+}
+
+/** The text of every error-ish event, for classification. */
+function errorText(events: Array<Record<string, unknown>>): string {
+  return events
+    .flatMap((e) => [e.message, (e.error as { message?: unknown } | undefined)?.message])
+    .filter((m): m is string => typeof m === "string")
+    .join("\n");
+}
 
 export interface CodexOptions {
   /** Returns the path of the `codex` binary, installing the pinned version if needed. */
@@ -19,21 +37,30 @@ export interface CodexOptions {
 /**
  * Codex, headless: `codex exec --json`. Its own home in a temp folder holds the login and the task's skills.
  * An API key reaches it as `CODEX_API_KEY` (what `exec` reads); a Business/Enterprise access token is logged in
- * with `codex login --with-access-token`. No ChatGPT `auth.json` is ever used (§6). Reports tokens, not dollars.
+ * with `codex login --with-access-token`. A leased ChatGPT `auth.json` is the third mode, behind both (§6). Reports tokens, not dollars.
  */
 export function codexAdapter(options: CodexOptions = {}): Adapter {
   const install = options.install ?? (() => installPinned("codex", "@openai/codex", CODEX_VERSION, "codex"));
 
   /** A fresh `CODEX_HOME`, logged in, and the environment that goes with it. */
-  async function session(binary: string): Promise<{ home: string; env: NodeJS.ProcessEnv; secrets: string[] }> {
+  async function session(binary: string, authFile?: string): Promise<{ home: string; env: NodeJS.ProcessEnv; secrets: string[]; leased: boolean }> {
     const home = mkdtempSync(join(process.env.RUNNER_TEMP ?? tmpdir(), "factory-codex-"));
     const apiKey = process.env.OPENAI_API_KEY;
     const accessToken = process.env.CODEX_ACCESS_TOKEN;
     const secrets = [apiKey, accessToken].filter((v): v is string => Boolean(v));
     // One credential only: Codex warns when several auth variables are set.
     const env = agentEnv({ CODEX_HOME: home, ...(apiKey ? { CODEX_API_KEY: apiKey } : {}) }, CREDENTIALS);
+    delete env.CODEX_AUTH_FILE;
     if (!apiKey && accessToken) await login(binary, env, accessToken);
-    return { home, env, secrets };
+    // Precedence: API key, then access token, then a leased login. The login lives only in the temporary home.
+    const leased = !apiKey && !accessToken && Boolean(authFile);
+    if (leased) {
+      const auth = readFileSync(authFile!, "utf8");
+      writeFileSync(join(home, "auth.json"), auth, { mode: 0o600 });
+      chmodSync(join(home, "auth.json"), 0o600);
+      secrets.push(...authSecrets(auth));
+    }
+    return { home, env, secrets, leased };
   }
 
   return {
@@ -44,7 +71,7 @@ export function codexAdapter(options: CodexOptions = {}): Adapter {
     },
     async run(input) {
       const binary = await install();
-      const { home, env, secrets } = await session(binary);
+      const { home, env, secrets, leased } = await session(binary, input.authFile);
       try {
         for (const [name, path] of Object.entries(input.skills)) cpSync(path, join(home, "skills", name), { recursive: true });
         const lastMessage = join(home, "last-message.txt");
@@ -66,7 +93,13 @@ export function codexAdapter(options: CodexOptions = {}): Adapter {
         const events = jsonLines(stdout);
         const failed = events.some((e) => e.type === "turn.failed");
         const status: AdapterOutput["status"] = timedOut ? "timed-out" : code !== 0 || failed ? "failed" : "ok";
-        return { status, usage: usage(events) };
+        const result: AdapterOutput = { status, usage: usage(events) };
+        if (status === "failed") {
+          const failure = classifyFailure(errorText(events));
+          if (failure) result.failure = failure;
+        }
+        if (leased) result.auth = handBack(input.authFile!, join(home, "auth.json"));
+        return result;
       } finally {
         rmSync(home, { recursive: true, force: true });
       }
@@ -87,6 +120,33 @@ export function codexAdapter(options: CodexOptions = {}): Adapter {
       }
     },
   };
+}
+
+/** Copies the home's (possibly refreshed) `auth.json` over the leased file, mode 0600, and says whether it changed. */
+function handBack(leasedPath: string, homeAuth: string): { path: string; changed: boolean } {
+  const before = readFileSync(leasedPath, "utf8");
+  if (!existsSync(homeAuth)) return { path: leasedPath, changed: false };
+  const after = readFileSync(homeAuth, "utf8");
+  if (after === before) return { path: leasedPath, changed: false };
+  writeFileSync(leasedPath, after, { mode: 0o600 });
+  chmodSync(leasedPath, 0o600);
+  return { path: leasedPath, changed: true };
+}
+
+/** Every token-like string value in an `auth.json`, so none can reach a transcript or log. */
+function authSecrets(auth: string): string[] {
+  const found: string[] = [];
+  const walk = (v: unknown): void => {
+    if (typeof v === "string") {
+      if (v.length >= 8 && !/^\d{4}-\d\d-\d\d/.test(v)) found.push(v);
+    } else if (v && typeof v === "object") Object.values(v).forEach(walk);
+  };
+  try {
+    walk(JSON.parse(auth));
+  } catch {
+    // Not JSON: nothing structured to scrub.
+  }
+  return found;
 }
 
 function login(binary: string, env: NodeJS.ProcessEnv, token: string): Promise<void> {
