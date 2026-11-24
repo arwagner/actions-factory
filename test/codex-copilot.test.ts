@@ -130,7 +130,7 @@ describe("codex adapter, leased ChatGPT login", () => {
       [
         "#!/bin/bash",
         `cp "$CODEX_HOME/auth.json" "${dir}/seen"`,
-        `stat -c %a "$CODEX_HOME/auth.json" > "${dir}/mode"`,
+        `(stat -c %a "$CODEX_HOME/auth.json" 2>/dev/null || stat -f %Lp "$CODEX_HOME/auth.json") > "${dir}/mode"`,
         `env > "${dir}/env"`,
         `echo "$CODEX_HOME" > "${dir}/home"`,
         "cat > /dev/null",
