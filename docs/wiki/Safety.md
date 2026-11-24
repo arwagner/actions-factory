@@ -38,6 +38,10 @@ Assume issue and PR text can try to steer the agent, so:
 - Transcripts aren't kept as artifacts on public repos.
 - Anyone can open an issue, but only people with write access can start a task on it.
 
+## ChatGPT logins for Codex
+
+In the ChatGPT-login mode, items whose author lacks write access are refused. A leaked ChatGPT login reaches your whole account, unlike a spend-capped API key, and the agent can read the login it leases. The saving token, `CODEX_POOL_TOKEN`, is yours, is never in the agent job, and is limited to environment secrets. See [Agents](Agents).
+
 ## What leaks, and what doesn't
 
 Log masking catches plain and base64-encoded secret values, but not reversed or split ones; the factory scrubs known values from transcripts and check output. The real control is which steps hold which secrets, hence the job split above.

@@ -19,7 +19,15 @@ A run whose agent has no credential stops before the agent starts, with a commen
 
 - **API key:** `OPENAI_API_KEY`.
 - **Business or Enterprise workspace:** `CODEX_ACCESS_TOKEN`.
-- A ChatGPT subscription login (`auth.json`) isn't supported: Codex refreshes and rewrites it, which a CI run can't do safely.
+- **ChatGPT logins (client-owned pool):** your own ChatGPT logins, kept as secrets in a `codex-pool` environment. A run leases one (state on the `factory-auth-state` branch), and a separate job saves the refreshed login back using `CODEX_POOL_TOKEN`, a token of yours limited to environment secrets that the agent never sees. A failing login is quarantined. Only items from authors with write access run in this mode.
+
+Setup outline (details are added as the feature lands):
+
+1. **Enrollment:** create the `codex-pool` environment, add `CODEX_POOL_TOKEN`, and enroll each login.
+2. **Recovery:** re-enroll a quarantined login.
+3. **Reseeding:** replace a login that has expired or been revoked.
+
+The agent can read the login it leases, and a leaked ChatGPT login reaches the whole account. See [Safety](Safety).
 
 ## Copilot
 

@@ -7,6 +7,10 @@ Decided in: Safety model (#14), cross-owner test (#18). See ADR 0004 and ADR 000
 - The router checks that whoever added the trigger label has write access or above. Triage users can add labels but can't push code, so they don't count.
 - **Fork PRs are refused** with a comment before any checkout. The stub never checks out fork code where secrets are available. A PR counts as a fork when `head.repo.full_name` differs from `base.repo.full_name`, or the head repo is gone. `head.repo.fork` isn't used: it is true for every PR inside a repo that is itself a fork (#28).
 
+## Author gate for Codex ChatGPT logins
+
+In the Codex ChatGPT-login mode (section 6), the router also refuses items whose author lacks write access, with a comment. A leased login is the client's own subscription, so outsiders can't spend it or aim the agent at it.
+
 ## Merge consent
 
 - **Only people merge.** The factory never adds `agent:merge`, in any template, and no layer can override that.
@@ -45,3 +49,4 @@ The only real control is which steps hold which secrets, hence the job split.
 
 - **Transcripts:** uploaded as artifacts kept for 7 days, with every known secret value scrubbed out. On public repos they aren't uploaded unless the client opts in.
 - **Hooks from other repos:** they run in the apply job holding `FACTORY_TOKEN`. Trust them like any action you `uses:`, and pin them to a commit SHA.
+- **ChatGPT logins leak wider.** A leaked ChatGPT login reaches the whole account, unlike a spend-capped API key. v1 accepts that the agent can read its leased login, since Codex needs it. The mitigations are the author gate, a pool of the client's own logins, and keeping `CODEX_POOL_TOKEN` out of the agent job.
