@@ -16275,8 +16275,8 @@ function claudeAdapter(options = {}) {
         cpSync(path, join4(skillsDir, name), { recursive: true });
       }
       const args = ["-p", "--output-format", "stream-json", "--verbose", "--json-schema", readFileSync2(input.planSchemaFile, "utf8")];
-      args.push("--permission-mode", "bypassPermissions");
-      if (input.permission === "read-only") args.push("--restricted", "--disallowedTools", "Edit", "Write", "NotebookEdit");
+      if (input.permission === "read-only") args.push("--restricted", "--permission-mode", "dontAsk", "--disallowedTools", "Edit", "Write", "NotebookEdit");
+      else args.push("--permission-mode", "bypassPermissions");
       if (input.model) args.push("--model", input.model);
       const env = agentEnv();
       const secrets = CREDENTIALS.map((name) => process.env[name]).filter((v) => Boolean(v));

@@ -70,7 +70,9 @@ describe("claude adapter", () => {
 
     await claudeAdapter({ install: async () => cli.bin, skillsDir: tree({}) }).run(input({ permission: "read-only" }));
 
-    expect(cli.read("args")).toContain("--restricted\n--disallowedTools\nEdit\nWrite\nNotebookEdit");
+    const args = cli.read("args");
+    expect(args).toContain("--restricted\n--permission-mode\ndontAsk\n--disallowedTools\nEdit\nWrite\nNotebookEdit");
+    expect(args).not.toContain("bypassPermissions");
   });
 
   it("never passes GitHub tokens to the CLI, and scrubs its credential from the transcript", async () => {
