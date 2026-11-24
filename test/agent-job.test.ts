@@ -204,7 +204,7 @@ describe("the agent job", () => {
 
   it("passes the agent's own reason through", async () => {
     const detail = "Failed to authenticate. API Error: 401";
-    const adapter = { name: "claude", credentials: [], run: async () => ({ status: detail ? ("failed" as const) : ("ok" as const), detail }), ping: async () => ({ ok: true, detail: "" }) };
+    const adapter = { name: "claude", credentials: [], run: async () => ({ status: "failed" as const, detail }), ping: async () => ({ ok: true, detail: "" }) };
     const base = setup({}, { agent: "claude" });
     const io = { ...base, adapters: { claude: adapter } };
 
