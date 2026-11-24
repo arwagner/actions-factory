@@ -53,8 +53,9 @@ export function claudeAdapter(options: ClaudeOptions = {}): Adapter {
         cpSync(path, join(skillsDir, name), { recursive: true });
       }
       const args = ["-p", "--output-format", "stream-json", "--verbose", "--json-schema", readFileSync(input.planSchemaFile, "utf8")];
-      args.push("--permission-mode", "bypassPermissions");
-      if (input.permission === "read-only") args.push("--restricted", "--disallowedTools", "Edit", "Write", "NotebookEdit");
+      // --restricted refuses bypassPermissions; dontAsk still runs the read tools it leaves.
+      if (input.permission === "read-only") args.push("--restricted", "--permission-mode", "dontAsk", "--disallowedTools", "Edit", "Write", "NotebookEdit");
+      else args.push("--permission-mode", "bypassPermissions");
       if (input.model) args.push("--model", input.model);
 
       const env = agentEnv();
