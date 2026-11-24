@@ -29,6 +29,7 @@ async function main(): Promise<void> {
       adapters: ADAPTERS,
       env: process.env,
       summary: (markdown) => appendFileSync(required("GITHUB_STEP_SUMMARY"), `${markdown}\n`),
+      log: (line) => console.log(line),
     });
     if (!ok) process.exitCode = 1;
     return;

@@ -14961,10 +14961,13 @@ function claudeAdapter(options = {}) {
       });
       if (timedOut) return { ok: false, detail: "Claude Code didn't answer within 3 minutes" };
       let result;
-      try {
-        result = JSON.parse(stdout.trim().split("\n").pop() ?? "");
-      } catch {
-        result = void 0;
+      for (const candidate of [stdout.trim(), stdout.trim().split("\n").pop() ?? "", stdout.slice(stdout.indexOf("{"))]) {
+        try {
+          result = JSON.parse(candidate);
+          break;
+        } catch {
+          result = void 0;
+        }
       }
       const said = scrubValues(String(result?.result ?? stdout).trim(), secrets).slice(0, 300);
       if (code !== 0 || !result || result.is_error) return { ok: false, detail: `Claude Code ${CLAUDE_CODE_VERSION} failed: ${said || `exit ${code}`}` };
@@ -16706,6 +16709,7 @@ async function doctorAgent(input) {
     }
   }
   const ok = checks.every((c) => c.ok);
+  for (const c of checks) input.log?.(`${c.ok ? "" : "::error::"}${input.agent} \xB7 ${c.name}: ${c.detail}${c.fix ? ` Fix: ${c.fix}` : ""}`);
   input.summary([`### actions-factory doctor: \`${input.agent}\` agent ${ok ? "works" : "has a problem"}`, "", renderChecks(checks), ""].join("\n"));
   return ok;
 }
@@ -16729,7 +16733,8 @@ async function main() {
       adapters: ADAPTERS,
       env: process.env,
       summary: (markdown) => appendFileSync(required("GITHUB_STEP_SUMMARY"), `${markdown}
-`)
+`),
+      log: (line) => console.log(line)
     });
     if (!ok) process.exitCode = 1;
     return;

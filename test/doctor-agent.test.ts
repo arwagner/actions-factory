@@ -11,8 +11,9 @@ const adapter = (ping: { ok: boolean; detail: string }): Adapter => ({
 
 async function check(env: Record<string, string>, ping = { ok: true, detail: "answered" }, agent = "claude") {
   const out: string[] = [];
-  const ok = await doctorAgent({ agent, adapters: { claude: adapter(ping) }, env, summary: (m) => out.push(m) });
-  return { ok, text: out.join("\n") };
+  const logs: string[] = [];
+  const ok = await doctorAgent({ agent, adapters: { claude: adapter(ping) }, env, summary: (m) => out.push(m), log: (l) => logs.push(l) });
+  return { ok, text: out.join("\n"), logs };
 }
 
 describe("doctorAgent", () => {
@@ -34,7 +35,9 @@ describe("doctorAgent", () => {
   });
 
   it("fails when the test prompt fails, and for an agent this release doesn't have", async () => {
-    expect((await check({ ANTHROPIC_API_KEY: "k" }, { ok: false, detail: "Invalid API key" })).text).toContain("| ❌ | Test prompt | Invalid API key");
+    const failed = await check({ ANTHROPIC_API_KEY: "k" }, { ok: false, detail: "Invalid API key" });
+    expect(failed.text).toContain("| ❌ | Test prompt | Invalid API key");
+    expect(failed.logs).toContain("::error::claude · Test prompt: Invalid API key Fix: Check that the credential is valid and has quota, then update the secret.");
     expect(await check({}, undefined, "gemini")).toMatchObject({ ok: false });
   });
 });
