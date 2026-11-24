@@ -40,7 +40,10 @@ const labelChanges = {
 /** The fields a plan for one item may carry. */
 const SINGLE_FIELDS = {
   outcome: { type: "string", description: "Exactly one of the task's outcomes." },
-  comment: { type: "string", description: "A comment to post on the subject." },
+  comment: {
+    type: "string",
+    description: "A comment to post on the subject. Required with an outcome that waits on a person, such as needs-a-human or blocked: say what they have to decide or do.",
+  },
   labels: { ...labelChanges, description: "Labels to add or remove, from the task's allowed list." },
   pullRequest: {
     type: "object",
@@ -170,6 +173,10 @@ function checkWrites(plan: Record<string, unknown>, task: PlanTask, at: string, 
     errors.push({ path: join("outcome"), message: `${plan.outcome} isn't one of this task's outcomes: ${outcomes.join(", ")}` });
   }
   if (plan.comment !== undefined && !task.writes.comment) errors.push({ path: join("comment"), message: "this task may not comment" });
+  const waits = typeof plan.outcome === "string" && (task.outcomes[plan.outcome] as { waitsOnPerson?: boolean } | undefined)?.waitsOnPerson;
+  if (waits && task.writes.comment && !(typeof plan.comment === "string" && plan.comment.trim())) {
+    errors.push({ path: join("comment"), message: `${plan.outcome} waits on a person, so say in a comment what they have to decide or do` });
+  }
   if (isMap(plan.labels)) {
     for (const direction of ["add", "remove"] as const) {
       const labels = plan.labels[direction];

@@ -16396,7 +16396,10 @@ var labelChanges = {
 };
 var SINGLE_FIELDS = {
   outcome: { type: "string", description: "Exactly one of the task's outcomes." },
-  comment: { type: "string", description: "A comment to post on the subject." },
+  comment: {
+    type: "string",
+    description: "A comment to post on the subject. Required with an outcome that waits on a person, such as needs-a-human or blocked: say what they have to decide or do."
+  },
   labels: { ...labelChanges, description: "Labels to add or remove, from the task's allowed list." },
   pullRequest: {
     type: "object",
