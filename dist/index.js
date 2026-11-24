@@ -16915,7 +16915,7 @@ var SINGLE_FIELDS = {
     additionalProperties: false,
     required: ["title", "body"],
     properties: { title: { type: "string" }, body: { type: "string" } },
-    description: "Open a pull request from the pushed branch."
+    description: "Open a pull request from the pushed branch. Required when you changed files and the task opens pull requests."
   },
   closeIssue: { type: "boolean", description: "Close the subject issue." },
   createIssues: {
@@ -16975,7 +16975,9 @@ function validatePlan(plan, task, ctx) {
 }
 function planJsonSchema(ctx) {
   const extras = ctx.planSchema?.properties ?? {};
+  const outcome = ctx.outcomes ? { ...SINGLE_FIELDS.outcome, enum: ctx.outcomes } : SINGLE_FIELDS.outcome;
   if (ctx.subject.kind === "batch") {
+    const { number, outcome: _2, ...rest2 } = ITEM_FIELDS;
     return {
       type: "object",
       additionalProperties: false,
@@ -16983,12 +16985,26 @@ function planJsonSchema(ctx) {
       properties: {
         items: {
           type: "array",
-          items: { type: "object", additionalProperties: false, required: ["number", "outcome"], properties: { ...ITEM_FIELDS, ...extras } }
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["number", "outcome", ...Object.keys(rest2)],
+            properties: { number, outcome, ...nullable(rest2), ...extras }
+          }
         }
       }
     };
   }
-  return { type: "object", additionalProperties: false, required: ["outcome"], properties: { ...SINGLE_FIELDS, ...extras } };
+  const { outcome: _, ...rest } = SINGLE_FIELDS;
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: ["outcome", ...Object.keys(rest)],
+    properties: { outcome, ...nullable(rest), ...extras }
+  };
+}
+function nullable(fields) {
+  return Object.fromEntries(Object.entries(fields).map(([key, field]) => [key, { ...field, type: [field.type, "null"] }]));
 }
 function checkShape(value, fields, planSchema, at, errors) {
   const join10 = (key) => at ? `${at}.${key}` : key;
@@ -17153,7 +17169,7 @@ async function applyWrites(io) {
 ${errors.map((e) => `- \`${e.path || "plan"}\`: ${e.message}`).join("\n")}`);
   }
   const plan = io.plan;
-  const branch = await pushChanges(io);
+  const branch = await pushChanges(io, plan);
   if (io.subject.kind === "batch") {
     for (const item of plan.items) await applyItem(io, item.number, item);
     await runAfterHook(io, { FACTORY_OUTCOME: "batch", FACTORY_PLAN: JSON.stringify(plan), FACTORY_SUBJECT: "" });
@@ -17210,7 +17226,7 @@ async function mergeWhenReady(io, number) {
   }
   await io.api.mergePull(number);
 }
-async function pushChanges(io) {
+async function pushChanges(io, plan) {
   const files2 = await io.git.changedFiles();
   if (files2.length === 0) return void 0;
   if (!io.task.writes.push) throw new Refusal("the agent changed files, but this task may not push.");
@@ -17220,6 +17236,10 @@ async function pushChanges(io) {
   }
   if (!io.checksPassed) throw new Refusal("the checks failed, so nothing was pushed.");
   const branch = await branchFor(io);
+  const opensPull = io.task.writes.pullRequest !== false && io.subject.kind !== "pr" && io.subject.kind !== "batch";
+  if (opensPull && !isMap3(plan.pullRequest) && await io.api.findOpenPull(branch) === void 0) {
+    throw new Refusal("the agent changed files but didn't ask for a pull request, so nothing was pushed.");
+  }
   await io.git.push(branch);
   return branch;
 }
@@ -17480,7 +17500,7 @@ async function prepare(io) {
   const { items, batchNumbers } = await gatherSubject(io);
   const planSchema = io.task.planSchema ? JSON.parse(readFileSync7(io.task.planSchema, "utf8")) : void 0;
   const ctxSubject = io.subject.kind === "batch" ? { kind: "batch", numbers: batchNumbers ?? [] } : io.subject;
-  writeFileSync5(f.planSchema, JSON.stringify(planJsonSchema({ subject: ctxSubject, planSchema }), null, 2));
+  writeFileSync5(f.planSchema, JSON.stringify(planJsonSchema({ subject: ctxSubject, planSchema, outcomes: Object.keys(io.task.outcomes) }), null, 2));
   const promptInput = {
     prompt: readFileSync7(io.task.prompt, "utf8"),
     instructions: io.task.instructions,

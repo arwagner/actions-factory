@@ -147,7 +147,7 @@ async function applyWrites(io: ApplyIO): Promise<string> {
   }
   const plan = io.plan as Record<string, unknown>;
 
-  const branch = await pushChanges(io);
+  const branch = await pushChanges(io, plan);
 
   if (io.subject.kind === "batch") {
     for (const item of plan.items as Array<Record<string, unknown>>) await applyItem(io, item.number as number, item);
@@ -215,7 +215,7 @@ async function mergeWhenReady(io: ApplyIO, number: number): Promise<void> {
 }
 
 /** Pushes the agent's work, if any, to a branch the factory owns. Returns the branch, or undefined if nothing changed. */
-async function pushChanges(io: ApplyIO): Promise<string | undefined> {
+async function pushChanges(io: ApplyIO, plan: Record<string, unknown>): Promise<string | undefined> {
   const files = await io.git.changedFiles();
   if (files.length === 0) return undefined;
   if (!io.task.writes.push) throw new Refusal("the agent changed files, but this task may not push.");
@@ -225,6 +225,11 @@ async function pushChanges(io: ApplyIO): Promise<string | undefined> {
   }
   if (!io.checksPassed) throw new Refusal("the checks failed, so nothing was pushed.");
   const branch = await branchFor(io);
+  // Work pushed with no pull request is stranded on a branch nobody is told about.
+  const opensPull = io.task.writes.pullRequest !== false && io.subject.kind !== "pr" && io.subject.kind !== "batch";
+  if (opensPull && !isMap(plan.pullRequest) && (await io.api.findOpenPull(branch)) === undefined) {
+    throw new Refusal("the agent changed files but didn't ask for a pull request, so nothing was pushed.");
+  }
   await io.git.push(branch);
   return branch;
 }

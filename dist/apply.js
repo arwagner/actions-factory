@@ -15961,7 +15961,7 @@ var SINGLE_FIELDS = {
     additionalProperties: false,
     required: ["title", "body"],
     properties: { title: { type: "string" }, body: { type: "string" } },
-    description: "Open a pull request from the pushed branch."
+    description: "Open a pull request from the pushed branch. Required when you changed files and the task opens pull requests."
   },
   closeIssue: { type: "boolean", description: "Close the subject issue." },
   createIssues: {
@@ -16018,6 +16018,13 @@ function validatePlan(plan, task, ctx) {
   }
   const sorted = errors.map((e, i) => ({ e, i })).sort((a, b) => a.e.path.localeCompare(b.e.path) || a.i - b.i).map(({ e }) => e);
   return { ok: sorted.length === 0, errors: sorted };
+}
+function withoutNulls(plan) {
+  if (!isMap2(plan)) return plan;
+  const strip = (value) => Object.fromEntries(Object.entries(value).filter(([, v]) => v !== null));
+  const out = strip(plan);
+  if (Array.isArray(out.items)) out.items = out.items.map((item) => isMap2(item) ? strip(item) : item);
+  return out;
 }
 function checkShape(value, fields, planSchema, at, errors) {
   const join4 = (key) => at ? `${at}.${key}` : key;
@@ -16182,7 +16189,7 @@ async function applyWrites(io) {
 ${errors.map((e) => `- \`${e.path || "plan"}\`: ${e.message}`).join("\n")}`);
   }
   const plan = io.plan;
-  const branch = await pushChanges(io);
+  const branch = await pushChanges(io, plan);
   if (io.subject.kind === "batch") {
     for (const item of plan.items) await applyItem(io, item.number, item);
     await runAfterHook(io, { FACTORY_OUTCOME: "batch", FACTORY_PLAN: JSON.stringify(plan), FACTORY_SUBJECT: "" });
@@ -16239,7 +16246,7 @@ async function mergeWhenReady(io, number) {
   }
   await io.api.mergePull(number);
 }
-async function pushChanges(io) {
+async function pushChanges(io, plan) {
   const files = await io.git.changedFiles();
   if (files.length === 0) return void 0;
   if (!io.task.writes.push) throw new Refusal("the agent changed files, but this task may not push.");
@@ -16249,6 +16256,10 @@ async function pushChanges(io) {
   }
   if (!io.checksPassed) throw new Refusal("the checks failed, so nothing was pushed.");
   const branch = await branchFor(io);
+  const opensPull = io.task.writes.pullRequest !== false && io.subject.kind !== "pr" && io.subject.kind !== "batch";
+  if (opensPull && !isMap3(plan.pullRequest) && await io.api.findOpenPull(branch) === void 0) {
+    throw new Refusal("the agent changed files but didn't ask for a pull request, so nothing was pushed.");
+  }
   await io.git.push(branch);
   return branch;
 }
@@ -16387,7 +16398,11 @@ async function main() {
   if (!loaded.ok) throw new Error("the factory config no longer validates");
   const task = loaded.config.tasks[decision.task];
   const readJson = (path) => existsSync4(path) ? JSON.parse(readFileSync2(path, "utf8")) : void 0;
-  const meta = readJson(join3(handoff, "meta.json")) ?? { agentStatus: "failed", checksPassed: false };
+  const meta = readJson(join3(handoff, "meta.json")) ?? {
+    agentStatus: "failed",
+    checksPassed: false,
+    agentError: "the agent's results never reached this job: downloading the handoff artifact failed."
+  };
   const server = env("GITHUB_SERVER_URL") ?? "https://github.com";
   const runUrl = `${server}/${owner}/${repo}/actions/runs/${required("GITHUB_RUN_ID")}`;
   const result = await applyRun({
@@ -16396,7 +16411,7 @@ async function main() {
     subject: decision.subject,
     batchNumbers: meta.batchNumbers,
     planSchema: task.planSchema ? readJson(task.planSchema) : void 0,
-    plan: readJson(join3(handoff, "plan.json")),
+    plan: withoutNulls(readJson(join3(handoff, "plan.json"))),
     agentStatus: meta.agentStatus,
     agentError: meta.agentError,
     checksPassed: meta.checksPassed,

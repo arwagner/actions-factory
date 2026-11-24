@@ -405,6 +405,20 @@ jobs:
           node-version: 24
 
       - name: Download the handoff
+        id: handoff
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: factory-handoff
+          path: ${{ runner.temp }}/handoff
+
+      # A just-uploaded artifact is sometimes not yet listed (seen seconds after upload): wait and try once more.
+      - name: Wait before retrying the download
+        if: steps.handoff.outcome == 'failure'
+        run: sleep 20
+
+      - name: Download the handoff again
+        if: steps.handoff.outcome == 'failure'
         continue-on-error: true
         uses: actions/download-artifact@v4
         with:
