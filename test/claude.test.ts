@@ -93,6 +93,11 @@ describe("claude adapter", () => {
     const errored = fakeCli(result({ is_error: true }));
     expect((await claudeAdapter({ install: async () => errored.bin, skillsDir: tree({}) }).run(input())).status).toBe("failed");
 
+    process.env.ANTHROPIC_API_KEY = "sk-ant-secret-value";
+    const said = fakeCli(result({ is_error: true, result: "Failed to authenticate.\nAPI Error: 401 sk-ant-secret-value" }));
+    const detail = (await claudeAdapter({ install: async () => said.bin, skillsDir: tree({}) }).run(input())).detail;
+    expect(detail).toBe("Failed to authenticate. API Error: 401 ***");
+
     const crashed = fakeCli("not json", "exit 3");
     expect((await claudeAdapter({ install: async () => crashed.bin, skillsDir: tree({}) }).run(input())).status).toBe("failed");
 

@@ -153,9 +153,13 @@ export async function runTurn(io: AgentJobIO, turn: number): Promise<void> {
     saveState(io, { ...state, agentStatus: "failed", checksPassed: undefined, turnsRun: turn, agentError });
     return;
   }
+  // A stale agentError from an earlier round must not outlive a round that went fine.
+  const agentError = result.status === "failed" ? `the ${adapter.name} agent failed${result.detail ? `: ${result.detail}` : "."}` : undefined;
+  if (agentError) io.log(`::error::${agentError.replace(/\s+/g, " ")}`);
   saveState(io, {
     ...state,
     agentStatus: result.status,
+    agentError,
     checksPassed: undefined,
     turnsRun: turn,
     usage: addUsage(state.usage, result.usage),

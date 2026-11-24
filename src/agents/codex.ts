@@ -3,7 +3,7 @@ import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } 
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { agentEnv, installPinned, jsonLines, planFromMessage, READ_ONLY_PLAN, runCli } from "./cli.js";
-import { scrubValues } from "./scrub.js";
+import { failureDetail, scrubValues } from "./scrub.js";
 import type { Adapter, AdapterOutput } from "./types.js";
 
 /** Pinned per factory release; nothing installs "latest" at run time (§6). */
@@ -66,7 +66,9 @@ export function codexAdapter(options: CodexOptions = {}): Adapter {
         const events = jsonLines(stdout);
         const failed = events.some((e) => e.type === "turn.failed");
         const status: AdapterOutput["status"] = timedOut ? "timed-out" : code !== 0 || failed ? "failed" : "ok";
-        return { status, usage: usage(events) };
+        if (status !== "failed") return { status, usage: usage(events) };
+        const error = [...events].reverse().find((e) => typeof e.message === "string")?.message as string | undefined;
+        return { status, usage: usage(events), detail: failureDetail(error, secrets, `exit ${code}`) };
       } finally {
         rmSync(home, { recursive: true, force: true });
       }

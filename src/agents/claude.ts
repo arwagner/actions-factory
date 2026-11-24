@@ -2,7 +2,7 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "nod
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { agentEnv, installPinned as install, runCli } from "./cli.js";
-import { scrubValues } from "./scrub.js";
+import { failureDetail, scrubValues } from "./scrub.js";
 import type { Adapter, AdapterOutput } from "./types.js";
 
 /** Pinned per factory release; nothing installs "latest" at run time (§6). */
@@ -79,7 +79,9 @@ export function claudeAdapter(options: ClaudeOptions = {}): Adapter {
         ? { inputTokens: result.usage?.input_tokens, outputTokens: result.usage?.output_tokens, costUsd: result.total_cost_usd }
         : undefined;
       const status: AdapterOutput["status"] = timedOut ? "timed-out" : code !== 0 || !result || result.is_error ? "failed" : "ok";
-      return { status, usage };
+      if (status !== "failed") return { status, usage };
+      const lastLine = stdout.trim().split("\n").pop();
+      return { status, usage, detail: failureDetail(result ? result.result : lastLine, secrets, `exit ${code}`) };
     },
   };
 }
@@ -87,6 +89,7 @@ export function claudeAdapter(options: ClaudeOptions = {}): Adapter {
 interface ResultEvent {
   type: "result";
   is_error?: boolean;
+  result?: string;
   structured_output?: unknown;
   total_cost_usd?: number;
   usage?: { input_tokens?: number; output_tokens?: number };

@@ -24,6 +24,8 @@ export interface AdapterInput {
 export interface AdapterOutput {
   status: "ok" | "failed" | "timed-out";
   usage?: { inputTokens?: number; outputTokens?: number; costUsd?: number };
+  /** Why the agent failed, when the CLI said. Scrubbed and capped; never holds a secret. */
+  detail?: string;
 }
 
 /** One agent CLI. Adapters never see a GitHub token. */
