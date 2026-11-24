@@ -30,6 +30,11 @@ export interface RouterIO {
   runUrl?: string;
   /** The factory commit this run uses (`job.workflow_sha`), for the summary. */
   factorySha?: string;
+  /**
+   * Whether the Codex ChatGPT-login pool has at least one enrolled login (§6). Absent when the route job can't read
+   * the pool state. Called only for a run whose agent is Codex.
+   */
+  poolEnrolled?: () => Promise<boolean>;
   summary: (markdown: string) => void;
   setOutput: (name: string, value: string) => void;
   /** This run's id, left out of today's run count. */
@@ -136,7 +141,9 @@ export async function runRouter(io: RouterIO): Promise<Decision> {
   io.setOutput("decision", JSON.stringify(decision));
   if (decision.kind === "run") {
     io.setOutput("task", decision.task);
-    io.setOutput("agent-job", JSON.stringify(agentJobSettings(loaded.config, decision.task)));
+    const settings = agentJobSettings(loaded.config, decision.task);
+    io.setOutput("agent-job", JSON.stringify(settings));
+    io.setOutput("codex-pool", String(settings.agent === "codex" && (await codexPoolOn(io))));
     // A PR task works on the PR's head, read now so every job uses the same commit.
     if (decision.subject.kind === "pr") {
       const pull = await reader.pullInfo(decision.subject.number);
@@ -350,5 +357,17 @@ function factoryVersion(factoryRoot: string): string {
     return (JSON.parse(readFileSync(join(factoryRoot, "package.json"), "utf8")) as { version: string }).version;
   } catch {
     return "0.0.0";
+  }
+}
+
+/** The pool mode is on when the client has enrolled at least one login: the state branch lists an account (§6). */
+async function codexPoolOn(io: RouterIO): Promise<boolean> {
+  if (!io.poolEnrolled) return false;
+  try {
+    return await io.poolEnrolled();
+  } catch (error) {
+    // Off, not guessed on: the run falls back to whatever other Codex credential the client set.
+    console.log(`::warning::couldn't read the Codex login pool, so the pool mode is off for this run: ${error instanceof Error ? error.message : String(error)}`);
+    return false;
   }
 }

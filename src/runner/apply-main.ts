@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { gitFetcher } from "../config/fetch.js";
+import { savePool } from "../pool/save-job.js";
 import { loadConfig } from "../config/load.js";
 import { gitHubApi } from "../router/github.js";
 import type { Decision } from "../router/route.js";
@@ -13,6 +14,15 @@ import { renderApplySummary } from "./summary.js";
 
 /** The apply job's entrypoint: wires `applyRun` to the Actions environment. */
 async function main(): Promise<void> {
+  if (process.argv[2] === "pool-save") {
+    // The Codex pool's saving job: holds CODEX_POOL_TOKEN, runs no agent code and reads no client config.
+    const outcomes = await savePool(process.env, (line) => console.log(line));
+    if (outcomes.some((o) => o.result === "quarantined")) {
+      console.log("::error title=actions-factory pool::a Codex login was quarantined; run `node dist/pool.js check`");
+      process.exitCode = 1;
+    }
+    return;
+  }
   const env = (name: string) => process.env[name] || undefined;
   const required = (name: string) => {
     const value = env(name);

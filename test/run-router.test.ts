@@ -87,6 +87,23 @@ describe("runRouter", () => {
     expect(gh.writes.every((w) => w.token === "factory-token")).toBe(true);
   });
 
+  it("sets the codex-pool output only for a Codex task with an enrolled login", async () => {
+    await runRouter(io({ poolEnrolled: async () => true }));
+    expect(outputs["codex-pool"]).toBe("false"); // the default template's agent is claude
+
+    outputs = {};
+    await runRouter(io({ poolEnrolled: async () => true, clientRoot: tree({ "factory.yml": "schemaVersion: 1\noperatorIssue: 1\nagent: codex\n" }) }));
+    expect(outputs["codex-pool"]).toBe("true");
+
+    outputs = {};
+    await runRouter(io({ poolEnrolled: async () => false, clientRoot: tree({ "factory.yml": "schemaVersion: 1\noperatorIssue: 1\nagent: codex\n" }) }));
+    expect(outputs["codex-pool"]).toBe("false");
+
+    outputs = {};
+    await runRouter(io({ poolEnrolled: async () => { throw new Error("boom"); }, clientRoot: tree({ "factory.yml": "schemaVersion: 1\noperatorIssue: 1\nagent: codex\n" }) }));
+    expect(outputs["codex-pool"]).toBe("false");
+  });
+
   it("starts the run summary: the linked subject, task, template, factory version and agent", async () => {
     await runRouter(io({ runUrl: "https://github.com/acme/app/actions/runs/9", factorySha: "abcdef1234567890" }));
 

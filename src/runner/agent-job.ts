@@ -3,6 +3,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from
 import { join } from "node:path";
 import { promisify } from "node:util";
 import type { Adapter } from "../agents/types.js";
+import type { PoolRun } from "../pool/lease-run.js";
 import type { GitHubApi } from "../router/github.js";
 import type { Subject } from "../router/route.js";
 import { WORK_REF } from "./bundle.js";
@@ -51,6 +52,8 @@ export interface AgentJobIO {
   log: (line: string) => void;
   /** The step's environment, where the agent's credentials are. */
   env: Record<string, string | undefined>;
+  /** The Codex ChatGPT-login pool, when this run leased from it (§6). */
+  pool?: PoolRun;
 }
 
 interface State {
@@ -128,31 +131,56 @@ export async function runTurn(io: AgentJobIO, turn: number): Promise<void> {
     saveState(io, { ...state, agentStatus: "failed", turnsRun: turn, agentError });
     return;
   }
+  // §6: in the pool mode a run that couldn't lease a login stops here, and the apply job parks the item with the reason.
+  if (io.pool && !io.pool.authFile() && io.pool.unavailable()) {
+    const agentError = `no Codex login was available: ${io.pool.unavailable()}.`;
+    io.log(`::error::${agentError}`);
+    saveState(io, { ...state, agentStatus: "failed", turnsRun: turn, agentError });
+    return;
+  }
   // If the step's own timeout kills this round, the state already says so.
   saveState(io, { ...state, agentStatus: "timed-out", checksPassed: undefined, turnsRun: turn });
   const started = Date.now();
+  const budgetMs = io.task.timeout * 60_000;
+  const left = () => budgetMs - (Date.now() - started);
   let result: Awaited<ReturnType<Adapter["run"]>>;
+  let usageSoFar: HandoffMeta["usage"];
   try {
-    result = await adapter.run({
-      checkout: io.checkout,
-      promptFile: f.prompt,
-      skills: io.task.skills,
-      planSchemaFile: f.planSchema,
-      planFile: f.plan,
-      permission: io.task.permission,
-      model: io.task.model,
-      timeoutMinutes: io.task.timeout,
-      transcriptFile: f.transcript,
-      turn,
-      task: io.task.name,
-      ...(io.env.CODEX_AUTH_FILE ? { authFile: io.env.CODEX_AUTH_FILE } : {}),
-    });
+    // A quota failure moves to another login while the task's time budget lasts; each login is tried once per run.
+    for (;;) {
+      const authFile = io.pool?.authFile() ?? io.env.CODEX_AUTH_FILE;
+      result = await adapter.run({
+        checkout: io.checkout,
+        promptFile: f.prompt,
+        skills: io.task.skills,
+        planSchemaFile: f.planSchema,
+        planFile: f.plan,
+        permission: io.task.permission,
+        model: io.task.model,
+        timeoutMinutes: io.pool ? left() / 60_000 : io.task.timeout,
+        transcriptFile: f.transcript,
+        turn,
+        task: io.task.name,
+        ...(authFile ? { authFile } : {}),
+      });
+      usageSoFar = addUsage(usageSoFar, result.usage);
+      if (!io.pool || !authFile) break;
+      io.pool.settle(result.status === "ok" ? undefined : result.failure);
+      if (result.failure !== "quota" || left() <= 0) break;
+      io.log("::warning::the Codex login hit a usage limit: trying another login");
+      if (!(await io.pool.next(left()))) break;
+    }
   } catch (error) {
     // The adapter itself broke (not the agent timing out): say so rather than leave the provisional timed-out.
     const agentError = `the ${adapter.name} adapter failed: ${error instanceof Error ? error.message : String(error)}`;
     io.log(`::error::${agentError}`);
     saveState(io, { ...state, agentStatus: "failed", checksPassed: undefined, turnsRun: turn, agentError });
     return;
+  }
+  result.usage = usageSoFar;
+  // The last login hit its limit and no other could be leased: say why, so the item is parked with a clear comment.
+  if (io.pool && result.failure === "quota" && !io.pool.authFile()) {
+    state.agentError = `every Codex login hit a usage limit or was busy: ${io.pool.unavailable() ?? "none left to try"}.`;
   }
   if (result.failure) io.log(`::warning::the ${adapter.name} run failed on ${result.failure === "auth" ? "an auth error: the login is bad" : "a quota or rate limit: try another login"}`);
   saveState(io, {

@@ -16755,7 +16755,9 @@ async function runRouter(io) {
   io.setOutput("decision", JSON.stringify(decision));
   if (decision.kind === "run") {
     io.setOutput("task", decision.task);
-    io.setOutput("agent-job", JSON.stringify(agentJobSettings(loaded.config, decision.task)));
+    const settings = agentJobSettings(loaded.config, decision.task);
+    io.setOutput("agent-job", JSON.stringify(settings));
+    io.setOutput("codex-pool", String(settings.agent === "codex" && await codexPoolOn(io)));
     if (decision.subject.kind === "pr") {
       const pull = await reader.pullInfo(decision.subject.number);
       io.setOutput("head-sha", pull.headSha);
@@ -16933,6 +16935,15 @@ function factoryVersion(factoryRoot) {
     return JSON.parse(readFileSync5(join7(factoryRoot, "package.json"), "utf8")).version;
   } catch {
     return "0.0.0";
+  }
+}
+async function codexPoolOn(io) {
+  if (!io.poolEnrolled) return false;
+  try {
+    return await io.poolEnrolled();
+  } catch (error) {
+    console.log(`::warning::couldn't read the Codex login pool, so the pool mode is off for this run: ${error instanceof Error ? error.message : String(error)}`);
+    return false;
   }
 }
 
@@ -17576,29 +17587,51 @@ async function runTurn(io, turn) {
     saveState(io, { ...state, agentStatus: "failed", turnsRun: turn, agentError });
     return;
   }
+  if (io.pool && !io.pool.authFile() && io.pool.unavailable()) {
+    const agentError = `no Codex login was available: ${io.pool.unavailable()}.`;
+    io.log(`::error::${agentError}`);
+    saveState(io, { ...state, agentStatus: "failed", turnsRun: turn, agentError });
+    return;
+  }
   saveState(io, { ...state, agentStatus: "timed-out", checksPassed: void 0, turnsRun: turn });
   const started = Date.now();
+  const budgetMs = io.task.timeout * 6e4;
+  const left = () => budgetMs - (Date.now() - started);
   let result;
+  let usageSoFar;
   try {
-    result = await adapter.run({
-      checkout: io.checkout,
-      promptFile: f.prompt,
-      skills: io.task.skills,
-      planSchemaFile: f.planSchema,
-      planFile: f.plan,
-      permission: io.task.permission,
-      model: io.task.model,
-      timeoutMinutes: io.task.timeout,
-      transcriptFile: f.transcript,
-      turn,
-      task: io.task.name,
-      ...io.env.CODEX_AUTH_FILE ? { authFile: io.env.CODEX_AUTH_FILE } : {}
-    });
+    for (; ; ) {
+      const authFile = io.pool?.authFile() ?? io.env.CODEX_AUTH_FILE;
+      result = await adapter.run({
+        checkout: io.checkout,
+        promptFile: f.prompt,
+        skills: io.task.skills,
+        planSchemaFile: f.planSchema,
+        planFile: f.plan,
+        permission: io.task.permission,
+        model: io.task.model,
+        timeoutMinutes: io.pool ? left() / 6e4 : io.task.timeout,
+        transcriptFile: f.transcript,
+        turn,
+        task: io.task.name,
+        ...authFile ? { authFile } : {}
+      });
+      usageSoFar = addUsage(usageSoFar, result.usage);
+      if (!io.pool || !authFile) break;
+      io.pool.settle(result.status === "ok" ? void 0 : result.failure);
+      if (result.failure !== "quota" || left() <= 0) break;
+      io.log("::warning::the Codex login hit a usage limit: trying another login");
+      if (!await io.pool.next(left())) break;
+    }
   } catch (error) {
     const agentError = `the ${adapter.name} adapter failed: ${error instanceof Error ? error.message : String(error)}`;
     io.log(`::error::${agentError}`);
     saveState(io, { ...state, agentStatus: "failed", checksPassed: void 0, turnsRun: turn, agentError });
     return;
+  }
+  result.usage = usageSoFar;
+  if (io.pool && result.failure === "quota" && !io.pool.authFile()) {
+    state.agentError = `every Codex login hit a usage limit or was busy: ${io.pool.unavailable() ?? "none left to try"}.`;
   }
   if (result.failure) io.log(`::warning::the ${adapter.name} run failed on ${result.failure === "auth" ? "an auth error: the login is bad" : "a quota or rate limit: try another login"}`);
   saveState(io, {
