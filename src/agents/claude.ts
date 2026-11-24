@@ -38,10 +38,14 @@ export function claudeAdapter(options: ClaudeOptions = {}): Adapter {
       });
       if (timedOut) return { ok: false, detail: "Claude Code didn't answer within 3 minutes" };
       let result: { is_error?: boolean; result?: string; total_cost_usd?: number } | undefined;
-      try {
-        result = JSON.parse(stdout.trim().split("\n").pop() ?? "");
-      } catch {
-        result = undefined;
+      // One JSON object, on one line or several, possibly after warning lines.
+      for (const candidate of [stdout.trim(), stdout.trim().split("\n").pop() ?? "", stdout.slice(stdout.indexOf("{"))]) {
+        try {
+          result = JSON.parse(candidate);
+          break;
+        } catch {
+          result = undefined;
+        }
       }
       const said = scrubValues(String(result?.result ?? stdout).trim(), secrets).slice(0, 300);
       if (code !== 0 || !result || result.is_error) return { ok: false, detail: `Claude Code ${CLAUDE_CODE_VERSION} failed: ${said || `exit ${code}`}` };

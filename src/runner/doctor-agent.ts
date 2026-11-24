@@ -10,6 +10,8 @@ export async function doctorAgent(input: {
   adapters: Record<string, Adapter>;
   env: Record<string, string | undefined>;
   summary: (markdown: string) => void;
+  /** The job log, which shows the results too: the summary isn't readable through the API. */
+  log?: (line: string) => void;
 }): Promise<boolean> {
   const adapter = input.adapters[input.agent];
   const checks: Check[] = [];
@@ -33,6 +35,7 @@ export async function doctorAgent(input: {
     }
   }
   const ok = checks.every((c) => c.ok);
+  for (const c of checks) input.log?.(`${c.ok ? "" : "::error::"}${input.agent} · ${c.name}: ${c.detail}${c.fix ? ` Fix: ${c.fix}` : ""}`);
   input.summary([`### actions-factory doctor: \`${input.agent}\` agent ${ok ? "works" : "has a problem"}`, "", renderChecks(checks), ""].join("\n"));
   return ok;
 }

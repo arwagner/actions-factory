@@ -16260,10 +16260,13 @@ function claudeAdapter(options = {}) {
       });
       if (timedOut) return { ok: false, detail: "Claude Code didn't answer within 3 minutes" };
       let result;
-      try {
-        result = JSON.parse(stdout.trim().split("\n").pop() ?? "");
-      } catch {
-        result = void 0;
+      for (const candidate of [stdout.trim(), stdout.trim().split("\n").pop() ?? "", stdout.slice(stdout.indexOf("{"))]) {
+        try {
+          result = JSON.parse(candidate);
+          break;
+        } catch {
+          result = void 0;
+        }
       }
       const said = scrubValues(String(result?.result ?? stdout).trim(), secrets).slice(0, 300);
       if (code !== 0 || !result || result.is_error) return { ok: false, detail: `Claude Code ${CLAUDE_CODE_VERSION} failed: ${said || `exit ${code}`}` };
