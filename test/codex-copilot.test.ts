@@ -1,7 +1,7 @@
-import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { codexAdapter } from "../src/agents/codex.js";
+import { classifyFailure, codexAdapter } from "../src/agents/codex.js";
 import { copilotAdapter } from "../src/agents/copilot.js";
 import type { AdapterInput } from "../src/agents/types.js";
 import { tree } from "./support/tree.js";
@@ -10,7 +10,7 @@ import { tree } from "./support/tree.js";
  * A stand-in CLI: records its args (one per line), env and stdin, writes `lastMessage` to the file after `-o`,
  * copies any installed skills listing, then prints `output`.
  */
-function fakeCli(output: string, lastMessage = "") {
+function fakeCli(output: string, lastMessage = "", exit = 0) {
   const dir = tree({ "last.txt": lastMessage });
   const bin = join(dir, "cli");
   writeFileSync(
@@ -25,6 +25,7 @@ function fakeCli(output: string, lastMessage = "") {
       "cat <<'JSON'",
       output,
       "JSON",
+      `exit ${exit}`,
     ].join("\n"),
   );
   chmodSync(bin, 0o755);
@@ -97,12 +98,12 @@ describe("codex adapter", () => {
 
   it("fails a turn Codex reports as failed, and scrubs the key from the transcript", async () => {
     process.env.OPENAI_API_KEY = "sk-secret";
-    const cli = fakeCli(lines({ type: "error", message: "Incorrect API key provided: sk-secret" }, { type: "turn.failed" }));
+    const cli = fakeCli(lines({ type: "error", message: "Incorrect API key provided: sk-secret and unrelated-private-value" }, { type: "turn.failed" }));
     const io = input();
 
     const output = await codexAdapter({ install: async () => cli.bin }).run(io);
 
-    expect(output.status).toBe("failed");
+    expect(output).toMatchObject({ status: "failed", detail: "authentication failed" });
     expect(readFileSync(io.transcriptFile, "utf8")).not.toContain("sk-secret");
     expect(existsSync(io.planFile)).toBe(false);
   });
@@ -114,6 +115,93 @@ describe("codex adapter", () => {
     expect(bad.ok).toBe(false);
     expect(bad.detail).toContain("Incorrect API key");
     expect(bad.detail).not.toContain("sk-secret");
+  });
+});
+
+describe("codex adapter, leased ChatGPT login", () => {
+  const completed = lines({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
+  const auth = JSON.stringify({ tokens: { access_token: "access-secret-1", refresh_token: "refresh-secret-1" } });
+
+  /** A CLI that records auth.json as it finds it, then optionally rewrites it as a refresh would. */
+  function authCli(output: string, rewrite?: string) {
+    const dir = tree({});
+    const bin = join(dir, "cli");
+    writeFileSync(
+      bin,
+      [
+        "#!/bin/bash",
+        `cp "$CODEX_HOME/auth.json" "${dir}/seen"`,
+        `(stat -c %a "$CODEX_HOME/auth.json" 2>/dev/null || stat -f %Lp "$CODEX_HOME/auth.json") > "${dir}/mode"`,
+        `env > "${dir}/env"`,
+        `echo "$CODEX_HOME" > "${dir}/home"`,
+        "cat > /dev/null",
+        ...(rewrite ? [`printf '%s' '${rewrite}' > "$CODEX_HOME/auth.json"`] : []),
+        "cat <<'JSON'",
+        output,
+        "JSON",
+      ].join("\n"),
+    );
+    chmodSync(bin, 0o755);
+    return { bin, read: (n: string) => readFileSync(join(dir, n), "utf8") };
+  }
+  const leasedFile = () => {
+    const file = join(tree({}), "auth.json");
+    writeFileSync(file, auth);
+    return file;
+  };
+
+  it("writes the leased login into the temporary home at 0600, reads it back unchanged, and removes the home", async () => {
+    const authFile = leasedFile();
+    const cli = authCli(completed);
+    const output = await codexAdapter({ install: async () => cli.bin }).run(input({ authFile }));
+    expect(output.status).toBe("ok");
+    expect(cli.read("seen")).toBe(auth);
+    expect(cli.read("mode").trim()).toBe("600");
+    expect(output.auth).toEqual({ path: authFile, changed: false });
+    expect(existsSync(cli.read("home").trim())).toBe(false);
+    expect(cli.read("env")).not.toContain("CODEX_AUTH_FILE");
+  });
+
+  it("hands back a refreshed login and says it changed", async () => {
+    const authFile = leasedFile();
+    const refreshed = JSON.stringify({ tokens: { access_token: "access-secret-2", refresh_token: "refresh-secret-2" } });
+    const output = await codexAdapter({ install: async () => authCli(completed, refreshed).bin }).run(input({ authFile }));
+    expect(output.auth).toEqual({ path: authFile, changed: true });
+    expect(readFileSync(authFile, "utf8")).toBe(refreshed);
+    expect(statSync(authFile).mode & 0o777).toBe(0o600);
+  });
+
+  it("scrubs the login's tokens from the transcript", async () => {
+    const io = input({ authFile: leasedFile() });
+    const cli = authCli(lines({ type: "error", message: "bad refresh-secret-1 / access-secret-1" }, { type: "turn.failed" }));
+    await codexAdapter({ install: async () => cli.bin }).run(io);
+    const transcript = readFileSync(io.transcriptFile, "utf8");
+    expect(transcript).not.toContain("refresh-secret-1");
+    expect(transcript).not.toContain("access-secret-1");
+  });
+
+  it("an API key or access token wins over the leased login", async () => {
+    process.env.OPENAI_API_KEY = "sk-secret";
+    const dir = tree({});
+    const bin = join(dir, "cli");
+    writeFileSync(bin, `#!/bin/bash\nls "$CODEX_HOME" > "${dir}/ls"\ncat >/dev/null\necho '${completed}'`);
+    chmodSync(bin, 0o755);
+    const output = await codexAdapter({ install: async () => bin }).run(input({ authFile: leasedFile() }));
+    expect(output.auth).toBeUndefined();
+    expect(readFileSync(join(dir, "ls"), "utf8")).not.toContain("auth.json");
+  });
+
+  it("reports an auth failure and a quota failure apart", async () => {
+    const bad = authCli(lines({ type: "error", message: "401 Unauthorized: refresh token was already used" }, { type: "turn.failed" }));
+    const slow = authCli(lines({ type: "turn.failed", error: { message: "You've hit your usage limit. Try again later." } }));
+    expect((await codexAdapter({ install: async () => bad.bin }).run(input({ authFile: leasedFile() }))).failure).toBe("auth");
+    expect((await codexAdapter({ install: async () => slow.bin }).run(input({ authFile: leasedFile() }))).failure).toBe("quota");
+  });
+
+  it("classifies messages", () => {
+    expect(classifyFailure("429 Too Many Requests")).toBe("quota");
+    expect(classifyFailure("Your access token could not be refreshed; please log in again")).toBe("auth");
+    expect(classifyFailure("network unreachable")).toBeUndefined();
   });
 });
 
@@ -143,6 +231,17 @@ describe("copilot adapter", () => {
     expect(env).not.toContain("factory-secret");
     expect(cli.read("skills").trim()).toBe("standards");
     expect(JSON.parse(readFileSync(io.planFile, "utf8"))).toEqual({ outcome: "done" });
+  });
+
+  it("reports a safe reason or exit code without publishing Copilot stdout", async () => {
+    const rateLimited = fakeCli("429 Too Many Requests: unrelated-private-value", "", 1);
+    const crashed = fakeCli("could not read /private/input and unrelated-private-value", "", 3);
+    expect(await copilotAdapter({ install: async () => rateLimited.bin }).run(input())).toMatchObject({
+      status: "failed", detail: "quota or rate limit",
+    });
+    expect(await copilotAdapter({ install: async () => crashed.bin }).run(input())).toMatchObject({
+      status: "failed", detail: "exit 3",
+    });
   });
 
   it("denies the write tool for read-only tasks", async () => {

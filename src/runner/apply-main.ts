@@ -2,16 +2,30 @@ import { spawn } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { gitFetcher } from "../config/fetch.js";
+import { savePool } from "../pool/save-job.js";
+import { addPoolNotice } from "../pool/summary.js";
 import { loadConfig } from "../config/load.js";
 import { gitHubApi } from "../router/github.js";
 import type { Decision } from "../router/route.js";
 import { type ApplyTask, applyRun } from "./apply.js";
 import { bundledWork } from "./bundle.js";
+import { withoutNulls } from "./plan.js";
 import type { HandoffMeta } from "./handoff.js";
 import { renderApplySummary } from "./summary.js";
 
 /** The apply job's entrypoint: wires `applyRun` to the Actions environment. */
 async function main(): Promise<void> {
+  if (process.argv[2] === "pool-save") {
+    // The Codex pool's saving job: holds CODEX_POOL_TOKEN, runs no agent code and reads no client config.
+    const outcomes = await savePool(process.env, (line) => console.log(line));
+    const quarantined = outcomes.filter((outcome) => outcome.result === "quarantined");
+    for (const { alias } of quarantined) addPoolNotice({ kind: "quarantined", alias });
+    if (quarantined.length > 0) {
+      console.log("::error title=actions-factory pool::a Codex login was quarantined; run `node dist/pool.js check`");
+      process.exitCode = 1;
+    }
+    return;
+  }
   const env = (name: string) => process.env[name] || undefined;
   const required = (name: string) => {
     const value = env(name);
@@ -37,7 +51,11 @@ async function main(): Promise<void> {
   const task = (loaded.config.tasks as Record<string, ApplyTask & { planSchema?: string }>)[decision.task];
 
   const readJson = (path: string) => (existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : undefined);
-  const meta: HandoffMeta = readJson(join(handoff, "meta.json")) ?? { agentStatus: "failed", checksPassed: false };
+  const meta: HandoffMeta = readJson(join(handoff, "meta.json")) ?? {
+    agentStatus: "failed",
+    checksPassed: false,
+    agentError: "the agent's results never reached this job: downloading the handoff artifact failed.",
+  };
   const server = env("GITHUB_SERVER_URL") ?? "https://github.com";
   const runUrl = `${server}/${owner}/${repo}/actions/runs/${required("GITHUB_RUN_ID")}`;
 
@@ -47,7 +65,7 @@ async function main(): Promise<void> {
     subject: decision.subject,
     batchNumbers: meta.batchNumbers,
     planSchema: task.planSchema ? readJson(task.planSchema) : undefined,
-    plan: readJson(join(handoff, "plan.json")),
+    plan: withoutNulls(readJson(join(handoff, "plan.json"))),
     agentStatus: meta.agentStatus,
     agentError: meta.agentError,
     checksPassed: meta.checksPassed,

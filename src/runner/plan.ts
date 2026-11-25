@@ -24,6 +24,8 @@ export interface PlanContext {
   subject: { kind: "issue" | "pr"; number: number } | { kind: "batch"; numbers: number[] } | { kind: "repo" };
   /** The task's `planSchema`, already read from its file: a JSON schema for the extra fields. */
   planSchema?: Record<string, unknown>;
+  /** The task's outcome names, listed for the agent as the only allowed values. */
+  outcomes?: string[];
 }
 
 const MERGE_LABEL = "agent:merge";
@@ -40,14 +42,17 @@ const labelChanges = {
 /** The fields a plan for one item may carry. */
 const SINGLE_FIELDS = {
   outcome: { type: "string", description: "Exactly one of the task's outcomes." },
-  comment: { type: "string", description: "A comment to post on the subject." },
+  comment: {
+    type: "string",
+    description: "A comment to post on the subject. Required with an outcome that waits on a person, such as needs-a-human or blocked: say what they have to decide or do.",
+  },
   labels: { ...labelChanges, description: "Labels to add or remove, from the task's allowed list." },
   pullRequest: {
     type: "object",
     additionalProperties: false,
     required: ["title", "body"],
     properties: { title: { type: "string" }, body: { type: "string" } },
-    description: "Open a pull request from the pushed branch.",
+    description: "Open a pull request from the pushed branch. Required when you changed files and the task opens pull requests.",
   },
   closeIssue: { type: "boolean", description: "Close the subject issue." },
   createIssues: {
@@ -119,10 +124,16 @@ export function validatePlan(plan: unknown, task: PlanTask, ctx: PlanContext): {
   return { ok: sorted.length === 0, errors: sorted };
 }
 
-/** The JSON schema handed to the agent: the base fields for this kind of subject, plus the task's extras. */
+/**
+ * The JSON schema handed to the agent: the base fields for this kind of subject, plus the task's extras. Every base
+ * field is required but nullable, with null meaning "none": the API refuses `anyOf` at a schema's top level, so a
+ * field one outcome needs can't be required for that outcome alone, and an optional one tends to be left out.
+ */
 export function planJsonSchema(ctx: PlanContext): Record<string, unknown> {
   const extras = (ctx.planSchema?.properties ?? {}) as Record<string, unknown>;
+  const outcome = ctx.outcomes ? { ...SINGLE_FIELDS.outcome, enum: ctx.outcomes } : SINGLE_FIELDS.outcome;
   if (ctx.subject.kind === "batch") {
+    const { number, outcome: _, ...rest } = ITEM_FIELDS;
     return {
       type: "object",
       additionalProperties: false,
@@ -130,12 +141,36 @@ export function planJsonSchema(ctx: PlanContext): Record<string, unknown> {
       properties: {
         items: {
           type: "array",
-          items: { type: "object", additionalProperties: false, required: ["number", "outcome"], properties: { ...ITEM_FIELDS, ...extras } },
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["number", "outcome", ...Object.keys(rest)],
+            properties: { number, outcome, ...nullable(rest), ...extras },
+          },
         },
       },
     };
   }
-  return { type: "object", additionalProperties: false, required: ["outcome"], properties: { ...SINGLE_FIELDS, ...extras } };
+  const { outcome: _, ...rest } = SINGLE_FIELDS;
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: ["outcome", ...Object.keys(rest)],
+    properties: { outcome, ...nullable(rest), ...extras },
+  };
+}
+
+function nullable(fields: Record<string, Record<string, unknown>>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(fields).map(([key, field]) => [key, { ...field, type: [field.type, "null"] }]));
+}
+
+/** The plan with the agent's null ("none") fields removed, in the plan and in each batch item. */
+export function withoutNulls(plan: unknown): unknown {
+  if (!isMap(plan)) return plan;
+  const strip = (value: Record<string, unknown>) => Object.fromEntries(Object.entries(value).filter(([, v]) => v !== null));
+  const out = strip(plan);
+  if (Array.isArray(out.items)) out.items = out.items.map((item) => (isMap(item) ? strip(item) : item));
+  return out;
 }
 
 function checkShape(
@@ -170,6 +205,10 @@ function checkWrites(plan: Record<string, unknown>, task: PlanTask, at: string, 
     errors.push({ path: join("outcome"), message: `${plan.outcome} isn't one of this task's outcomes: ${outcomes.join(", ")}` });
   }
   if (plan.comment !== undefined && !task.writes.comment) errors.push({ path: join("comment"), message: "this task may not comment" });
+  const waits = typeof plan.outcome === "string" && (task.outcomes[plan.outcome] as { waitsOnPerson?: boolean } | undefined)?.waitsOnPerson;
+  if (waits && task.writes.comment && !(typeof plan.comment === "string" && plan.comment.trim())) {
+    errors.push({ path: join("comment"), message: `${plan.outcome} waits on a person, so say in a comment what they have to decide or do` });
+  }
   if (isMap(plan.labels)) {
     for (const direction of ["add", "remove"] as const) {
       const labels = plan.labels[direction];

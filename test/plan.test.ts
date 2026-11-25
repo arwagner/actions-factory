@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { planJsonSchema, validatePlan } from "../src/runner/plan.js";
+import { planJsonSchema, validatePlan, withoutNulls } from "../src/runner/plan.js";
 
 const writes = { comment: true, labels: ["needs-a-human"], pullRequest: false as const, push: false, closeIssue: false, createIssues: 0, merge: false };
 const task = (overrides: Record<string, unknown> = {}) => ({
@@ -53,6 +53,19 @@ describe("validatePlan", () => {
     ]);
   });
 
+  it("requires a comment saying why, for an outcome that waits on a person", () => {
+    const waiting = task({ outcomes: { done: {}, "needs-a-human": { waitsOnPerson: true } } });
+
+    expect(validatePlan({ outcome: "needs-a-human" }, waiting, issue).errors).toEqual([
+      { path: "comment", message: "needs-a-human waits on a person, so say in a comment what they have to decide or do" },
+    ]);
+    expect(validatePlan({ outcome: "needs-a-human", comment: "  " }, waiting, issue).ok).toBe(false);
+    expect(validatePlan({ outcome: "needs-a-human", comment: "Pick a lease store." }, waiting, issue).ok).toBe(true);
+    expect(validatePlan({ outcome: "done" }, waiting, issue).ok).toBe(true);
+    // A task that can't comment can't explain, so it isn't asked to.
+    expect(validatePlan({ outcome: "needs-a-human" }, { ...waiting, writes: { ...writes, comment: false } }, issue).ok).toBe(true);
+  });
+
   it("accepts the extra fields a task's planSchema declares, validated by it", () => {
     const planSchema = { type: "object", properties: { confidence: { type: "number", maximum: 1 } } };
 
@@ -88,13 +101,38 @@ describe("planJsonSchema", () => {
     const planSchema = { type: "object", properties: { duplicate_of: { type: "integer" } } };
 
     const single = planJsonSchema({ subject: { kind: "issue", number: 1 }, planSchema }) as { required: string[]; properties: object };
-    expect(single.required).toEqual(["outcome"]);
+    expect(single.required).toEqual(["outcome", "comment", "labels", "pullRequest", "closeIssue", "createIssues", "merge"]);
     expect(Object.keys(single.properties)).toEqual(["outcome", "comment", "labels", "pullRequest", "closeIssue", "createIssues", "merge", "duplicate_of"]);
 
     const batch = planJsonSchema({ subject: { kind: "batch", numbers: [1] }, planSchema }) as {
       properties: { items: { items: { required: string[]; properties: object } } };
     };
-    expect(batch.properties.items.items.required).toEqual(["number", "outcome"]);
+    expect(batch.properties.items.items.required).toEqual(["number", "outcome", "comment", "labels", "close"]);
     expect(Object.keys(batch.properties.items.items.properties)).toContain("duplicate_of");
+  });
+
+  // The API refuses anyOf at a tool schema's top level, so per-outcome requirements can't be expressed. Instead the
+  // agent must answer every base field, with null for "none", so it can't leave one out by default.
+  it("requires every base field, nullable, and lists the task's outcomes", () => {
+    const schema = planJsonSchema({ subject: { kind: "issue", number: 1 }, outcomes: ["done", "needs-a-human"] }) as {
+      required: string[];
+      properties: Record<string, { type: unknown; enum?: string[] }>;
+    };
+
+    expect(schema.required).toEqual(["outcome", "comment", "labels", "pullRequest", "closeIssue", "createIssues", "merge"]);
+    expect(schema.properties.outcome).toMatchObject({ type: "string", enum: ["done", "needs-a-human"] });
+    expect(schema.properties.comment.type).toEqual(["string", "null"]);
+    expect(schema.properties.pullRequest.type).toEqual(["object", "null"]);
+  });
+});
+
+describe("withoutNulls", () => {
+  it("drops null fields from a plan and from each batch item", () => {
+    expect(withoutNulls({ outcome: "done", comment: null, pullRequest: { title: "t", body: "b" } })).toEqual({
+      outcome: "done",
+      pullRequest: { title: "t", body: "b" },
+    });
+    expect(withoutNulls({ items: [{ number: 1, outcome: "easy-call", comment: null }] })).toEqual({ items: [{ number: 1, outcome: "easy-call" }] });
+    expect(withoutNulls(undefined)).toBeUndefined();
   });
 });

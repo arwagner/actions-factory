@@ -26,8 +26,11 @@ A label added with `FACTORY_TOKEN` starts workflows. So a task hands off by addi
 | `FACTORY_CHECK_ENV` | check steps only; dotenv format, one `NAME=value` per line |
 | `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` | the Claude adapter |
 | `OPENAI_API_KEY`, `CODEX_ACCESS_TOKEN` | the Codex adapter |
+| `CODEX_POOL_TRANSPORT_PRIVATE_KEY` | the saving job only: opens the sealed Codex login handoff |
+| `CODEX_POOL_TOKEN` | the save-back job and the manual pool doctor (section 6): a client-owned token limited to environment secrets, never in the agent job |
 | `COPILOT_GITHUB_TOKEN` | the Copilot adapter (a token with only Copilot Requests, never `FACTORY_TOKEN`) |
 
 - Adding an adapter that needs a new secret means a new stub version (section 11).
 - Each secret goes only into the step that needs it, never job-wide (section 9).
+- The Codex ChatGPT-login mode (section 6) keeps its logins as secrets in a `codex-pool` environment, not in this list. The saving job and the manual pool doctor hold `CODEX_POOL_TOKEN`, never the agent job.
 - A run whose agent has no credential refuses, with a comment naming the secret it needs.

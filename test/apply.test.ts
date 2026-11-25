@@ -103,6 +103,24 @@ describe("applyRun", () => {
     expect(statusBody(42)).toContain("checks failed");
   });
 
+  it("refuses changes without a pull request when the task opens one, before pushing", async () => {
+    const result = await applyRun(io({ plan: { outcome: "done", comment: "Built it." } }));
+
+    expect(result.ok).toBe(false);
+    expect(pushed).toEqual([]);
+    expect(statusBody(42)).toContain("the agent changed files but didn't ask for a pull request");
+  });
+
+  it("pushes without a new pull request when the branch already has one", async () => {
+    const task = { ...implement, branch: "subject" as const };
+    gh.openPulls["agent/issue-42"] = 61;
+
+    const result = await applyRun(io({ task, plan: { outcome: "done" } }));
+
+    expect(result.ok).toBe(true);
+    expect(pushed).toEqual(["agent/issue-42"]);
+  });
+
   it("blocks the item when the agent didn't finish", async () => {
     const result = await applyRun(io({ agentStatus: "timed-out", plan: undefined }));
 
@@ -119,7 +137,7 @@ describe("applyRun", () => {
   });
 
   it("shows the agent's own error text when the adapter reported one", async () => {
-    const agentError = "the claude agent failed: Failed to authenticate. API Error: 401";
+    const agentError = "the claude agent failed: authentication failed (HTTP 401)";
 
     await applyRun(io({ agentStatus: "failed", agentError, plan: undefined }));
 

@@ -89,6 +89,22 @@ describe("the agent job", () => {
     expect(git(io.checkout, "bundle", "list-heads", bundle)).toContain("refs/heads/factory-work");
   });
 
+  it("puts only routed batch items into the prompt and the handoff", async () => {
+    const io = setup({});
+    io.subject = { kind: "batch", query: "label:agent:explore", numbers: [42] };
+    gh.search = [
+      { number: 42, title: "Add a widget", body: "Please." },
+      { number: 88, title: "Unapproved newcomer", body: "Never pass this to the model." },
+    ];
+
+    await prepare(io);
+    await handoff(io);
+
+    expect(prompt(io)).toContain("Add a widget");
+    expect(prompt(io)).not.toContain("Never pass this to the model.");
+    expect(meta(io).batchNumbers).toEqual([42]);
+  });
+
   it("runs the before hook first and puts what it writes to context.md into the prompt", async () => {
     const io = setup({}, { hooks: { before: "/h/before.sh" } });
     io.runHook = async (_path, env) => writeFileSync(join(env.FACTORY_WORK_DIR, "context.md"), "Build ticket #7 next.");
@@ -203,16 +219,16 @@ describe("the agent job", () => {
   });
 
   it("passes the agent's own reason through", async () => {
-    const detail = "Failed to authenticate. API Error: 401";
-    const adapter = { name: "claude", credentials: [], run: async () => ({ status: "failed" as const, detail }), ping: async () => ({ ok: true, detail: "" }) };
+    const detail = "authentication failed (HTTP 401)";
+    const adapter = { name: "claude", credentials: [], run: async () => ({ status: "failed" as const, detail } as const), ping: async () => ({ ok: true, detail: "" }) };
     const base = setup({}, { agent: "claude" });
     const io = { ...base, adapters: { claude: adapter } };
 
     await prepare(io);
     await runTurn(io, 1);
-    const state = () => JSON.parse(readFileSync(join(io.workDir, "state.json"), "utf8"));
-    expect(state()).toMatchObject({ agentStatus: "failed", agentError: "the claude agent failed: Failed to authenticate. API Error: 401" });
-    expect(logs).toContain("::error::the claude agent failed: Failed to authenticate. API Error: 401");
+    await handoff(io);
+    expect(meta(io)).toMatchObject({ agentStatus: "failed", agentError: "the claude agent failed: authentication failed (HTTP 401)" });
+    expect(logs).toContain("::error::the claude agent failed: authentication failed (HTTP 401)");
   });
 
   it("reports an adapter that throws as failed, with the reason, not as timed out", async () => {

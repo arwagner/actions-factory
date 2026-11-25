@@ -7,6 +7,12 @@ Decided in: Safety model (#14), cross-owner test (#18). See ADR 0004 and ADR 000
 - The router checks that whoever added the trigger label has write access or above. Triage users can add labels but can't push code, so they don't count.
 - **Fork PRs are refused** with a comment before any checkout. The stub never checks out fork code where secrets are available. A PR counts as a fork when `head.repo.full_name` differs from `base.repo.full_name`, or the head repo is gone. `head.repo.fork` isn't used: it is true for every PR inside a repo that is itself a fork (#28).
 
+## Author gate for Codex ChatGPT logins
+
+Before a Codex task can lease a ChatGPT login (section 6), the router checks the current write access of the person who opened each issue or PR. It checks the author separately from the labeler because an outsider can edit their own issue after a writer labels it. The body is still attributed to its original author.
+
+The router comments on refused items so a maintainer can open a new issue or PR under their own name. In a batch it excludes only the refused items and passes the checked list to the agent job, which does not search again. API-key and access-token runs keep the existing labeler and comment checks.
+
 ## Merge consent
 
 - **Only people merge.** The factory never adds `agent:merge`, in any template, and no layer can override that.
@@ -43,5 +49,7 @@ Observed in #18:
 
 The only real control is which steps hold which secrets, hence the job split.
 
+- **Agent failure comments:** report a fixed diagnosis or process exit code, never text copied from CLI output.
 - **Transcripts:** uploaded as artifacts kept for 7 days, with every known secret value scrubbed out. On public repos they aren't uploaded unless the client opts in.
 - **Hooks from other repos:** they run in the apply job holding `FACTORY_TOKEN`. Trust them like any action you `uses:`, and pin them to a commit SHA.
+- **ChatGPT logins leak wider.** A leaked ChatGPT login reaches the whole account, unlike a spend-capped API key. v1 accepts that the agent can read its leased login, since Codex needs it. The mitigations are the author gate, a pool of the client's own logins, and keeping `CODEX_POOL_TOKEN` out of the agent job.

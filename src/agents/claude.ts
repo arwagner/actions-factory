@@ -80,8 +80,7 @@ export function claudeAdapter(options: ClaudeOptions = {}): Adapter {
         : undefined;
       const status: AdapterOutput["status"] = timedOut ? "timed-out" : code !== 0 || !result || result.is_error ? "failed" : "ok";
       if (status !== "failed") return { status, usage };
-      const lastLine = stdout.trim().split("\n").pop();
-      return { status, usage, detail: failureDetail(result ? result.result : lastLine, secrets, `exit ${code}`) };
+      return { status, usage, detail: failureDetail(result?.result ?? stdout.trim().split("\n").pop(), code) };
     },
   };
 }

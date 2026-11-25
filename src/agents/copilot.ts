@@ -60,7 +60,7 @@ export function copilotAdapter(options: CopilotOptions = {}): Adapter {
         }
         const status: AdapterOutput["status"] = timedOut ? "timed-out" : code !== 0 ? "failed" : "ok";
         if (status !== "failed") return { status, usage: usage(events) };
-        return { status, usage: usage(events), detail: failureDetail(stdout.trim().split("\n").slice(-3).join(" "), secrets(), `exit ${code}`) };
+        return { status, usage: usage(events), detail: failureDetail(stdout.trim().split("\n").slice(-3).join(" "), code) };
       } finally {
         rmSync(home, { recursive: true, force: true });
       }

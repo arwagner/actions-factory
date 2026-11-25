@@ -15950,7 +15950,7 @@ function subjectFor(task, item) {
 }
 
 // src/router/version.ts
-var STUB_VERSION = "1.0.0";
+var STUB_VERSION = "1.1.0";
 var MIN_STUB_VERSION = "1.0.0";
 
 // src/router/github.ts
@@ -16013,6 +16013,7 @@ function gitHubApi(token, owner, repo, baseUrl = "https://api.github.com") {
       return {
         title: issue.title,
         body: issue.body ?? "",
+        author: issue.user?.login,
         isPullRequest: issue.pull_request !== void 0,
         open: issue.state === "open",
         labels: issue.labels.map((l) => l.name)
@@ -16236,6 +16237,16 @@ var READ_ONLY_PLAN = "\n\nThis run can't write files. Don't write the plan file:
 function scrubValues(text, secrets) {
   return secrets.filter((s) => s.length >= 4).sort((a, b) => b.length - a.length).reduce((out, s) => out.split(s).join("***"), text);
 }
+function failureDetail(text, code, kind) {
+  const message = text ?? "";
+  if (kind === "quota" || /\b429\b|too many requests|quota|rate[_ -]?limit|usage[_ ]limit/i.test(message)) return "quota or rate limit";
+  if (/\b401\b/.test(message)) return "authentication failed (HTTP 401)";
+  if (kind === "auth" || /unauthori[sz]ed|authenticat|(?:invalid|incorrect) (?:API key|(?:access )?token|credential)/i.test(message)) return "authentication failed";
+  if (/\b403\b/.test(message)) return "access denied (HTTP 403)";
+  if (/access denied|forbidden/i.test(message)) return "access denied";
+  if (/\b50[0234]\b|service unavailable|bad gateway/i.test(message)) return "service unavailable";
+  return code === 0 ? "CLI reported an error" : `exit ${code}`;
+}
 
 // src/agents/claude.ts
 var CLAUDE_CODE_VERSION = "2.1.319";
@@ -16294,7 +16305,8 @@ function claudeAdapter(options = {}) {
       if (result?.structured_output !== void 0) writeFileSync(input.planFile, JSON.stringify(result.structured_output, null, 2));
       const usage3 = result ? { inputTokens: result.usage?.input_tokens, outputTokens: result.usage?.output_tokens, costUsd: result.total_cost_usd } : void 0;
       const status = timedOut ? "timed-out" : code !== 0 || !result || result.is_error ? "failed" : "ok";
-      return { status, usage: usage3 };
+      if (status !== "failed") return { status, usage: usage3 };
+      return { status, usage: usage3, detail: failureDetail(result?.result ?? stdout.trim().split("\n").pop(), code) };
     }
   };
 }
@@ -16315,21 +16327,37 @@ async function installPinned2() {
 
 // src/agents/codex.ts
 import { execFile as execFile3 } from "node:child_process";
-import { cpSync as cpSync2, existsSync as existsSync4, mkdtempSync as mkdtempSync3, readFileSync as readFileSync3, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { chmodSync, cpSync as cpSync2, existsSync as existsSync4, mkdtempSync as mkdtempSync3, readFileSync as readFileSync3, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import { tmpdir as tmpdir2 } from "node:os";
 import { dirname as dirname2, join as join5 } from "node:path";
 var CODEX_VERSION = "0.167.0";
-var CREDENTIALS2 = ["OPENAI_API_KEY", "CODEX_ACCESS_TOKEN"];
+var CREDENTIALS2 = ["OPENAI_API_KEY", "CODEX_ACCESS_TOKEN", "CODEX_AUTH_FILE"];
+function classifyFailure(text) {
+  if (/usage[_ ]limit|rate[_ -]?limit|quota|\b429\b|too many requests|insufficient_quota|hit your .*limit/i.test(text)) return "quota";
+  if (/\b401\b|unauthori[sz]ed|invalid[_ ](api[_ ])?(key|token|credential|grant)|(token|session|login|credentials?).{0,40}(expired|revoked|invalid|was already used|reused)|refresh token|log ?in again|sign ?in again|not logged in|authentication/i.test(text)) return "auth";
+  return void 0;
+}
+function errorText(events) {
+  return events.flatMap((e) => [e.message, e.error?.message]).filter((m) => typeof m === "string").join("\n");
+}
 function codexAdapter(options = {}) {
   const install = options.install ?? (() => installPinned("codex", "@openai/codex", CODEX_VERSION, "codex"));
-  async function session(binary) {
+  async function session(binary, authFile) {
     const home = mkdtempSync3(join5(process.env.RUNNER_TEMP ?? tmpdir2(), "factory-codex-"));
     const apiKey = process.env.OPENAI_API_KEY;
     const accessToken = process.env.CODEX_ACCESS_TOKEN;
     const secrets = [apiKey, accessToken].filter((v) => Boolean(v));
     const env = agentEnv({ CODEX_HOME: home, ...apiKey ? { CODEX_API_KEY: apiKey } : {} }, CREDENTIALS2);
+    delete env.CODEX_AUTH_FILE;
     if (!apiKey && accessToken) await login(binary, env, accessToken);
-    return { home, env, secrets };
+    const leased = !apiKey && !accessToken && Boolean(authFile);
+    if (leased) {
+      const auth = readFileSync3(authFile, "utf8");
+      writeFileSync2(join5(home, "auth.json"), auth, { mode: 384 });
+      chmodSync(join5(home, "auth.json"), 384);
+      secrets.push(...authSecrets(auth));
+    }
+    return { home, env, secrets, leased };
   }
   return {
     name: "codex",
@@ -16339,7 +16367,7 @@ function codexAdapter(options = {}) {
     },
     async run(input) {
       const binary = await install();
-      const { home, env, secrets } = await session(binary);
+      const { home, env, secrets, leased } = await session(binary, input.authFile);
       try {
         for (const [name, path] of Object.entries(input.skills)) cpSync2(path, join5(home, "skills", name), { recursive: true });
         const lastMessage2 = join5(home, "last-message.txt");
@@ -16358,7 +16386,15 @@ function codexAdapter(options = {}) {
         const events = jsonLines(stdout);
         const failed = events.some((e) => e.type === "turn.failed");
         const status = timedOut ? "timed-out" : code !== 0 || failed ? "failed" : "ok";
-        return { status, usage: usage(events) };
+        const result = { status, usage: usage(events) };
+        if (status === "failed") {
+          const text = errorText(events);
+          const failure = classifyFailure(text);
+          if (failure) result.failure = failure;
+          result.detail = failureDetail(text, code, failure);
+        }
+        if (leased) result.auth = handBack(input.authFile, join5(home, "auth.json"));
+        return result;
       } finally {
         rmSync2(home, { recursive: true, force: true });
       }
@@ -16379,6 +16415,28 @@ function codexAdapter(options = {}) {
       }
     }
   };
+}
+function handBack(leasedPath, homeAuth) {
+  const before = readFileSync3(leasedPath, "utf8");
+  if (!existsSync4(homeAuth)) return { path: leasedPath, changed: false };
+  const after = readFileSync3(homeAuth, "utf8");
+  if (after === before) return { path: leasedPath, changed: false };
+  writeFileSync2(leasedPath, after, { mode: 384 });
+  chmodSync(leasedPath, 384);
+  return { path: leasedPath, changed: true };
+}
+function authSecrets(auth) {
+  const found = [];
+  const walk = (v) => {
+    if (typeof v === "string") {
+      if (v.length >= 8 && !/^\d{4}-\d\d-\d\d/.test(v)) found.push(v);
+    } else if (v && typeof v === "object") Object.values(v).forEach(walk);
+  };
+  try {
+    walk(JSON.parse(auth));
+  } catch {
+  }
+  return found;
 }
 function login(binary, env, token) {
   return new Promise((resolve2, reject) => {
@@ -16441,7 +16499,8 @@ function copilotAdapter(options = {}) {
           if (plan !== void 0) writeFileSync3(input.planFile, JSON.stringify(plan, null, 2));
         }
         const status = timedOut ? "timed-out" : code !== 0 ? "failed" : "ok";
-        return { status, usage: usage2(events) };
+        if (status !== "failed") return { status, usage: usage2(events) };
+        return { status, usage: usage2(events), detail: failureDetail(stdout.trim().split("\n").slice(-3).join(" "), code) };
       } finally {
         rmSync3(home, { recursive: true, force: true });
       }
@@ -16661,6 +16720,11 @@ async function runRouter(io) {
       warnings: decision.warnings
     };
   }
+  const trigger = event.payload.label?.name;
+  const codexPool = decision.kind === "run" && !io.hasDirectCodexCredential && agentJobSettings(loaded.config, decision.task).agent === "codex" && await codexPoolOn(io);
+  if (codexPool && decision.kind === "run") {
+    decision = await gatePoolAuthors(decision, { io, loaded, reader, writer, trigger });
+  }
   if (decision.kind === "run" && "number" in decision.subject) {
     decision = await applyLimits(decision, io, loaded, reader);
   }
@@ -16682,7 +16746,10 @@ async function runRouter(io) {
   let checks;
   if (doctor) {
     checks = await doctorChecks({ loaded, writer, stubVersion: io.stubVersion, labelsError });
-    io.setOutput("doctor-agents", JSON.stringify(doctorAgents(loaded)));
+    const agents = doctorAgents(loaded);
+    const pool = !io.hasDirectCodexCredential && agents.some(({ agent }) => agent === "codex") ? await io.poolDoctor?.() : void 0;
+    if (pool) checks.push(...pool);
+    io.setOutput("doctor-agents", JSON.stringify(pool ? agents.filter(({ agent }) => agent !== "codex") : agents));
   }
   let tickReport;
   if (decision.kind === "sweep") {
@@ -16691,7 +16758,6 @@ async function runRouter(io) {
   if (decision.kind === "sweep" && writer) {
     tickReport = await tick({ config: loaded.config, reader, writer, now: io.now ?? /* @__PURE__ */ new Date(), runId: io.runId });
   }
-  const trigger = event.payload.label?.name;
   const assignee = loaded.ok ? loaded.config.assignee : void 0;
   if (decision.kind === "run" && "number" in decision.subject) {
     if (trigger) await writer.removeLabel(decision.subject.number, trigger);
@@ -16711,7 +16777,9 @@ async function runRouter(io) {
   io.setOutput("decision", JSON.stringify(decision));
   if (decision.kind === "run") {
     io.setOutput("task", decision.task);
-    io.setOutput("agent-job", JSON.stringify(agentJobSettings(loaded.config, decision.task)));
+    const settings = agentJobSettings(loaded.config, decision.task);
+    io.setOutput("agent-job", JSON.stringify(settings));
+    io.setOutput("codex-pool", String(codexPool));
     if (decision.subject.kind === "pr") {
       const pull = await reader.pullInfo(decision.subject.number);
       io.setOutput("head-sha", pull.headSha);
@@ -16725,6 +16793,57 @@ async function runRouter(io) {
     }
   }
   return decision;
+}
+function poolAuthorRefusal(subject, warnings) {
+  const item = subject.kind === "pr" ? "pull request" : "issue";
+  return {
+    kind: "refuse",
+    code: "pool-author",
+    message: `Codex ChatGPT-login mode only runs on items opened by someone with write access. A maintainer can open a new ${item} under their own name.`,
+    subject,
+    warnings
+  };
+}
+async function gatePoolAuthors(decision, ctx) {
+  const { subject, warnings } = decision;
+  const permissions = /* @__PURE__ */ new Map();
+  const check = async (number) => {
+    const { author, isPullRequest } = await ctx.reader.getIssue(number);
+    if (author && !permissions.has(author)) {
+      permissions.set(author, ["admin", "write"].includes(await ctx.reader.permission(author)));
+    }
+    return { allowed: author !== void 0 && permissions.get(author) === true, kind: isPullRequest ? "pr" : "issue" };
+  };
+  if ("number" in subject) {
+    return (await check(subject.number)).allowed ? decision : poolAuthorRefusal(subject, warnings);
+  }
+  if (subject.kind === "repo") {
+    if (subject.origin === void 0) return decision;
+    const { allowed, kind } = await check(subject.origin);
+    return allowed ? decision : poolAuthorRefusal({ kind, number: subject.origin }, warnings);
+  }
+  const found = new Set((await ctx.reader.searchIssues(subject.query)).map((item) => item.number));
+  const candidates = subject.origin === void 0 ? found : /* @__PURE__ */ new Set([...found, subject.origin]);
+  let origin = subject.origin;
+  const numbers = [];
+  for (const number of candidates) {
+    const { allowed, kind } = await check(number);
+    if (allowed) {
+      if (found.has(number)) numbers.push(number);
+    } else {
+      if (number === origin) origin = void 0;
+      await postRefusal(poolAuthorRefusal({ kind, number }, warnings), {
+        ...ctx,
+        trigger: number === subject.origin ? ctx.trigger : void 0
+      });
+    }
+  }
+  if (numbers.length === 0 && (found.size > 0 || origin !== subject.origin)) {
+    const message = "No eligible items remain for this Codex ChatGPT-login batch.";
+    if (origin !== void 0) return { kind: "refuse", code: "pool-author", message, subject: { ...subject, origin }, warnings };
+    return { kind: "ignore", reason: message, warnings };
+  }
+  return { ...decision, subject: { kind: "batch", query: subject.query, numbers, ...origin === void 0 ? {} : { origin } } };
 }
 async function resolveSweptItem(event, reader) {
   const payload = event.payload;
@@ -16837,7 +16956,7 @@ function summaryFor(decision, loaded, tickReport, checks, details) {
   const title = checks ? `doctor: ${failed ? `${failed} problem${failed === 1 ? "" : "s"}` : "all checks pass"}` : headline(decision);
   const lines = [`### actions-factory: ${title}`, ""];
   if (details) lines.push(details, "");
-  if (checks) lines.push(renderChecks(checks), "", "The agent credentials are checked in the doctor's agent job.", "");
+  if (checks) lines.push(renderChecks(checks), "", "Direct agent credentials are checked in the doctor's agent job. The doctor doesn't use pooled logins.", "");
   if (tickReport) lines.push(tickReport.length > 0 ? tickReport.join("\n") : "Nothing is due or waiting.", "");
   for (const warning of decision.warnings) lines.push(`> [!WARNING]`, `> ${warning}`, "");
   if (decision.kind === "refuse") lines.push(decision.message, "");
@@ -16891,6 +17010,15 @@ function factoryVersion(factoryRoot) {
     return "0.0.0";
   }
 }
+async function codexPoolOn(io) {
+  if (!io.poolEnrolled) return false;
+  try {
+    return await io.poolEnrolled();
+  } catch (error) {
+    console.log(`::warning::couldn't read the Codex login pool, so the pool mode is off for this run: ${error instanceof Error ? error.message : String(error)}`);
+    return false;
+  }
+}
 
 // src/runner/plan.ts
 var import__2 = __toESM(require__(), 1);
@@ -16905,14 +17033,17 @@ var labelChanges = {
 };
 var SINGLE_FIELDS = {
   outcome: { type: "string", description: "Exactly one of the task's outcomes." },
-  comment: { type: "string", description: "A comment to post on the subject." },
+  comment: {
+    type: "string",
+    description: "A comment to post on the subject. Required with an outcome that waits on a person, such as needs-a-human or blocked: say what they have to decide or do."
+  },
   labels: { ...labelChanges, description: "Labels to add or remove, from the task's allowed list." },
   pullRequest: {
     type: "object",
     additionalProperties: false,
     required: ["title", "body"],
     properties: { title: { type: "string" }, body: { type: "string" } },
-    description: "Open a pull request from the pushed branch."
+    description: "Open a pull request from the pushed branch. Required when you changed files and the task opens pull requests."
   },
   closeIssue: { type: "boolean", description: "Close the subject issue." },
   createIssues: {
@@ -16972,7 +17103,9 @@ function validatePlan(plan, task, ctx) {
 }
 function planJsonSchema(ctx) {
   const extras = ctx.planSchema?.properties ?? {};
+  const outcome = ctx.outcomes ? { ...SINGLE_FIELDS.outcome, enum: ctx.outcomes } : SINGLE_FIELDS.outcome;
   if (ctx.subject.kind === "batch") {
+    const { number, outcome: _2, ...rest2 } = ITEM_FIELDS;
     return {
       type: "object",
       additionalProperties: false,
@@ -16980,12 +17113,26 @@ function planJsonSchema(ctx) {
       properties: {
         items: {
           type: "array",
-          items: { type: "object", additionalProperties: false, required: ["number", "outcome"], properties: { ...ITEM_FIELDS, ...extras } }
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["number", "outcome", ...Object.keys(rest2)],
+            properties: { number, outcome, ...nullable(rest2), ...extras }
+          }
         }
       }
     };
   }
-  return { type: "object", additionalProperties: false, required: ["outcome"], properties: { ...SINGLE_FIELDS, ...extras } };
+  const { outcome: _, ...rest } = SINGLE_FIELDS;
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: ["outcome", ...Object.keys(rest)],
+    properties: { outcome, ...nullable(rest), ...extras }
+  };
+}
+function nullable(fields) {
+  return Object.fromEntries(Object.entries(fields).map(([key, field]) => [key, { ...field, type: [field.type, "null"] }]));
 }
 function checkShape(value, fields, planSchema, at, errors) {
   const join10 = (key) => at ? `${at}.${key}` : key;
@@ -17012,6 +17159,10 @@ function checkWrites(plan, task, at, errors) {
     errors.push({ path: join10("outcome"), message: `${plan.outcome} isn't one of this task's outcomes: ${outcomes.join(", ")}` });
   }
   if (plan.comment !== void 0 && !task.writes.comment) errors.push({ path: join10("comment"), message: "this task may not comment" });
+  const waits = typeof plan.outcome === "string" && task.outcomes[plan.outcome]?.waitsOnPerson;
+  if (waits && task.writes.comment && !(typeof plan.comment === "string" && plan.comment.trim())) {
+    errors.push({ path: join10("comment"), message: `${plan.outcome} waits on a person, so say in a comment what they have to decide or do` });
+  }
   if (isMap2(plan.labels)) {
     for (const direction of ["add", "remove"]) {
       const labels = plan.labels[direction];
@@ -17146,7 +17297,7 @@ async function applyWrites(io) {
 ${errors.map((e) => `- \`${e.path || "plan"}\`: ${e.message}`).join("\n")}`);
   }
   const plan = io.plan;
-  const branch = await pushChanges(io);
+  const branch = await pushChanges(io, plan);
   if (io.subject.kind === "batch") {
     for (const item of plan.items) await applyItem(io, item.number, item);
     await runAfterHook(io, { FACTORY_OUTCOME: "batch", FACTORY_PLAN: JSON.stringify(plan), FACTORY_SUBJECT: "" });
@@ -17203,7 +17354,7 @@ async function mergeWhenReady(io, number) {
   }
   await io.api.mergePull(number);
 }
-async function pushChanges(io) {
+async function pushChanges(io, plan) {
   const files2 = await io.git.changedFiles();
   if (files2.length === 0) return void 0;
   if (!io.task.writes.push) throw new Refusal("the agent changed files, but this task may not push.");
@@ -17213,6 +17364,10 @@ async function pushChanges(io) {
   }
   if (!io.checksPassed) throw new Refusal("the checks failed, so nothing was pushed.");
   const branch = await branchFor(io);
+  const opensPull = io.task.writes.pullRequest !== false && io.subject.kind !== "pr" && io.subject.kind !== "batch";
+  if (opensPull && !isMap3(plan.pullRequest) && await io.api.findOpenPull(branch) === void 0) {
+    throw new Refusal("the agent changed files but didn't ask for a pull request, so nothing was pushed.");
+  }
   await io.git.push(branch);
   return branch;
 }
@@ -17473,7 +17628,7 @@ async function prepare(io) {
   const { items, batchNumbers } = await gatherSubject(io);
   const planSchema = io.task.planSchema ? JSON.parse(readFileSync7(io.task.planSchema, "utf8")) : void 0;
   const ctxSubject = io.subject.kind === "batch" ? { kind: "batch", numbers: batchNumbers ?? [] } : io.subject;
-  writeFileSync5(f.planSchema, JSON.stringify(planJsonSchema({ subject: ctxSubject, planSchema }), null, 2));
+  writeFileSync5(f.planSchema, JSON.stringify(planJsonSchema({ subject: ctxSubject, planSchema, outcomes: Object.keys(io.task.outcomes) }), null, 2));
   const promptInput = {
     prompt: readFileSync7(io.task.prompt, "utf8"),
     instructions: io.task.instructions,
@@ -17500,37 +17655,61 @@ async function runTurn(io, turn) {
     return;
   }
   if (adapter.credentials.length > 0 && !adapter.credentials.some((name) => io.env[name])) {
-    const agentError = `the ${adapter.name} agent has no credential. Set the ${adapter.credentials.map((n) => `\`${n}\``).join(" or ")} secret.`;
-    io.log(`::error::${agentError}`);
-    saveState(io, { ...state, agentStatus: "failed", turnsRun: turn, agentError });
+    const agentError2 = `the ${adapter.name} agent has no credential. Set the ${adapter.credentials.map((n) => `\`${n}\``).join(" or ")} secret.`;
+    io.log(`::error::${agentError2}`);
+    saveState(io, { ...state, agentStatus: "failed", turnsRun: turn, agentError: agentError2 });
+    return;
+  }
+  if (io.pool && !io.pool.authFile() && io.pool.unavailable()) {
+    const agentError2 = `no Codex login was available: ${io.pool.unavailable()}.`;
+    io.log(`::error::${agentError2}`);
+    saveState(io, { ...state, agentStatus: "failed", turnsRun: turn, agentError: agentError2 });
     return;
   }
   saveState(io, { ...state, agentStatus: "timed-out", checksPassed: void 0, turnsRun: turn });
   const started = Date.now();
+  const budgetMs = io.task.timeout * 6e4;
+  const left = () => budgetMs - (Date.now() - started);
   let result;
+  let usageSoFar;
   try {
-    result = await adapter.run({
-      checkout: io.checkout,
-      promptFile: f.prompt,
-      skills: io.task.skills,
-      planSchemaFile: f.planSchema,
-      planFile: f.plan,
-      permission: io.task.permission,
-      model: io.task.model,
-      timeoutMinutes: io.task.timeout,
-      transcriptFile: f.transcript,
-      turn,
-      task: io.task.name
-    });
+    for (; ; ) {
+      const authFile = io.pool?.authFile() ?? io.env.CODEX_AUTH_FILE;
+      result = await adapter.run({
+        checkout: io.checkout,
+        promptFile: f.prompt,
+        skills: io.task.skills,
+        planSchemaFile: f.planSchema,
+        planFile: f.plan,
+        permission: io.task.permission,
+        model: io.task.model,
+        timeoutMinutes: io.pool ? left() / 6e4 : io.task.timeout,
+        transcriptFile: f.transcript,
+        turn,
+        task: io.task.name,
+        ...authFile ? { authFile } : {}
+      });
+      usageSoFar = addUsage(usageSoFar, result.usage);
+      if (!io.pool || !authFile) break;
+      io.pool.settle(result.status === "ok" ? void 0 : result.failure);
+      if (result.failure !== "quota" || left() <= 0) break;
+      io.log("::warning::the Codex login hit a usage limit: trying another login");
+      if (!await io.pool.next(left())) break;
+    }
   } catch (error) {
-    const agentError = `the ${adapter.name} adapter failed: ${error instanceof Error ? error.message : String(error)}`;
-    io.log(`::error::${agentError}`);
-    saveState(io, { ...state, agentStatus: "failed", checksPassed: void 0, turnsRun: turn, agentError });
+    const agentError2 = `the ${adapter.name} adapter failed: ${error instanceof Error ? error.message : String(error)}`;
+    io.log(`::error::${agentError2}`);
+    saveState(io, { ...state, agentStatus: "failed", checksPassed: void 0, turnsRun: turn, agentError: agentError2 });
     return;
   }
+  result.usage = usageSoFar;
+  const poolExhausted = io.pool && result.failure === "quota" && !io.pool.authFile();
+  const agentError = result.status !== "failed" ? void 0 : poolExhausted ? `every Codex login hit a usage limit or was busy: ${io.pool?.unavailable() ?? "none left to try"}.` : `the ${adapter.name} agent failed${result.detail ? `: ${result.detail}` : "."}`;
+  if (agentError) io.log(`::error::${agentError}`);
   saveState(io, {
     ...state,
     agentStatus: result.status,
+    agentError,
     checksPassed: void 0,
     turnsRun: turn,
     usage: addUsage(state.usage, result.usage),
@@ -17616,6 +17795,11 @@ async function gatherSubject(io) {
     case "pr":
       return { items: [await item(io.subject.number, io.subject.kind)] };
     case "batch": {
+      if (io.subject.numbers !== void 0) {
+        const items2 = [];
+        for (const number of io.subject.numbers) items2.push(await item(number, "issue"));
+        return { items: items2, batchNumbers: io.subject.numbers };
+      }
       const found = await api.searchIssues(io.subject.query);
       const items = [];
       for (const issue of found) items.push(await item(issue.number, "issue", issue.title, issue.body));

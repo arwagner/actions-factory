@@ -4,7 +4,7 @@ import { gitFetcher } from "../config/fetch.js";
 import { type FetchRepo, loadConfig, type LoadResult } from "../config/load.js";
 import { renderConfig } from "../config/render.js";
 import type { GitHubApi, Label } from "./github.js";
-import { type Decision, route } from "./route.js";
+import { type Decision, type Subject, route } from "./route.js";
 import { CLI_VERSIONS } from "../agents/versions.js";
 import { countRuns, LOOP_BRAKE, startOfDay } from "./limits.js";
 import { type Check, doctorAgents, doctorChecks, renderChecks } from "./doctor.js";
@@ -30,6 +30,15 @@ export interface RouterIO {
   runUrl?: string;
   /** The factory commit this run uses (`job.workflow_sha`), for the summary. */
   factorySha?: string;
+  /** Whether an API key or access token overrides the pool. No credential value enters the router. */
+  hasDirectCodexCredential?: boolean;
+  /**
+   * Whether the Codex ChatGPT-login pool has at least one enrolled login (§6). Absent when the route job can't read
+   * the pool state. Called only for a run whose agent is Codex.
+   */
+  poolEnrolled?: () => Promise<boolean>;
+  /** Pool health checks for a manual doctor, if the pool is configured. */
+  poolDoctor?: () => Promise<Check[] | undefined>;
   summary: (markdown: string) => void;
   setOutput: (name: string, value: string) => void;
   /** This run's id, left out of today's run count. */
@@ -78,6 +87,13 @@ export async function runRouter(io: RouterIO): Promise<Decision> {
     };
   }
 
+  const trigger = (event.payload.label as { name?: string } | undefined)?.name;
+  const codexPool = decision.kind === "run" && !io.hasDirectCodexCredential
+    && agentJobSettings(loaded.config, decision.task).agent === "codex" && await codexPoolOn(io);
+  if (codexPool && decision.kind === "run") {
+    decision = await gatePoolAuthors(decision, { io, loaded, reader, writer, trigger });
+  }
+
   if (decision.kind === "run" && "number" in decision.subject) {
     decision = await applyLimits(decision, io, loaded, reader);
   }
@@ -103,7 +119,10 @@ export async function runRouter(io: RouterIO): Promise<Decision> {
   let checks: Check[] | undefined;
   if (doctor) {
     checks = await doctorChecks({ loaded, writer, stubVersion: io.stubVersion, labelsError });
-    io.setOutput("doctor-agents", JSON.stringify(doctorAgents(loaded)));
+    const agents = doctorAgents(loaded);
+    const pool = !io.hasDirectCodexCredential && agents.some(({ agent }) => agent === "codex") ? await io.poolDoctor?.() : undefined;
+    if (pool) checks.push(...pool);
+    io.setOutput("doctor-agents", JSON.stringify(pool ? agents.filter(({ agent }) => agent !== "codex") : agents));
   }
 
   let tickReport: string[] | undefined;
@@ -115,7 +134,6 @@ export async function runRouter(io: RouterIO): Promise<Decision> {
     tickReport = await tick({ config: loaded.config as never, reader, writer, now: io.now ?? new Date(), runId: io.runId });
   }
 
-  const trigger = (event.payload.label as { name?: string } | undefined)?.name;
   const assignee = loaded.ok ? (loaded.config.assignee as string | undefined) : undefined;
   if (decision.kind === "run" && "number" in decision.subject) {
     if (trigger) await writer!.removeLabel(decision.subject.number, trigger);
@@ -136,7 +154,9 @@ export async function runRouter(io: RouterIO): Promise<Decision> {
   io.setOutput("decision", JSON.stringify(decision));
   if (decision.kind === "run") {
     io.setOutput("task", decision.task);
-    io.setOutput("agent-job", JSON.stringify(agentJobSettings(loaded.config, decision.task)));
+    const settings = agentJobSettings(loaded.config, decision.task);
+    io.setOutput("agent-job", JSON.stringify(settings));
+    io.setOutput("codex-pool", String(codexPool));
     // A PR task works on the PR's head, read now so every job uses the same commit.
     if (decision.subject.kind === "pr") {
       const pull = await reader.pullInfo(decision.subject.number);
@@ -156,6 +176,62 @@ export async function runRouter(io: RouterIO): Promise<Decision> {
 
 type Refusal = Extract<Decision, { kind: "refuse" }>;
 type Event = { name: string; payload: Record<string, unknown> };
+type RefusalContext = { io: RouterIO; loaded: LoadResult; reader: GitHubApi; writer?: GitHubApi; trigger?: string };
+
+function poolAuthorRefusal(subject: Extract<Subject, { number: number }>, warnings: string[]): Refusal {
+  const item = subject.kind === "pr" ? "pull request" : "issue";
+  return {
+    kind: "refuse",
+    code: "pool-author",
+    message: `Codex ChatGPT-login mode only runs on items opened by someone with write access. A maintainer can open a new ${item} under their own name.`,
+    subject,
+    warnings,
+  };
+}
+
+/** Selects pool-backed subjects in the route job, before any login can be leased. */
+async function gatePoolAuthors(decision: Run, ctx: RefusalContext): Promise<Decision> {
+  const { subject, warnings } = decision;
+  const permissions = new Map<string, boolean>();
+  const check = async (number: number) => {
+    const { author, isPullRequest } = await ctx.reader.getIssue(number);
+    if (author && !permissions.has(author)) {
+      permissions.set(author, ["admin", "write"].includes(await ctx.reader.permission(author)));
+    }
+    return { allowed: author !== undefined && permissions.get(author) === true, kind: isPullRequest ? "pr" as const : "issue" as const };
+  };
+  if ("number" in subject) {
+    return (await check(subject.number)).allowed ? decision : poolAuthorRefusal(subject, warnings);
+  }
+  if (subject.kind === "repo") {
+    if (subject.origin === undefined) return decision;
+    const { allowed, kind } = await check(subject.origin);
+    return allowed ? decision : poolAuthorRefusal({ kind, number: subject.origin }, warnings);
+  }
+
+  const found = new Set((await ctx.reader.searchIssues(subject.query)).map((item) => item.number));
+  const candidates = subject.origin === undefined ? found : new Set([...found, subject.origin]);
+  let origin = subject.origin;
+  const numbers: number[] = [];
+  for (const number of candidates) {
+    const { allowed, kind } = await check(number);
+    if (allowed) {
+      if (found.has(number)) numbers.push(number);
+    } else {
+      if (number === origin) origin = undefined;
+      await postRefusal(poolAuthorRefusal({ kind, number }, warnings), {
+        ...ctx,
+        trigger: number === subject.origin ? ctx.trigger : undefined,
+      });
+    }
+  }
+  if (numbers.length === 0 && (found.size > 0 || origin !== subject.origin)) {
+    const message = "No eligible items remain for this Codex ChatGPT-login batch.";
+    if (origin !== undefined) return { kind: "refuse", code: "pool-author", message, subject: { ...subject, origin }, warnings };
+    return { kind: "ignore", reason: message, warnings };
+  }
+  return { ...decision, subject: { kind: "batch", query: subject.query, numbers, ...(origin === undefined ? {} : { origin }) } };
+}
 
 /**
  * A sweep dispatch (`factory-run` naming a trigger label) stands for the label event that was dropped or held
@@ -221,7 +297,7 @@ async function postDeferral(decision: Extract<Decision, { kind: "defer" }>, writ
  */
 async function postRefusal(
   decision: Refusal,
-  ctx: { io: RouterIO; loaded: LoadResult; reader: GitHubApi; writer?: GitHubApi; trigger?: string },
+  ctx: RefusalContext,
 ): Promise<void> {
   const body = `**actions-factory** didn't run${ctx.trigger ? ` \`${ctx.trigger}\`` : ""}: ${decision.message}${
     ctx.io.runUrl ? `\n\n[Run](${ctx.io.runUrl})` : ""
@@ -293,7 +369,7 @@ function summaryFor(decision: Decision, loaded: LoadResult, tickReport?: string[
   const title = checks ? `doctor: ${failed ? `${failed} problem${failed === 1 ? "" : "s"}` : "all checks pass"}` : headline(decision);
   const lines = [`### actions-factory: ${title}`, ""];
   if (details) lines.push(details, "");
-  if (checks) lines.push(renderChecks(checks), "", "The agent credentials are checked in the doctor's agent job.", "");
+  if (checks) lines.push(renderChecks(checks), "", "Direct agent credentials are checked in the doctor's agent job. The doctor doesn't use pooled logins.", "");
   if (tickReport) lines.push(tickReport.length > 0 ? tickReport.join("\n") : "Nothing is due or waiting.", "");
   for (const warning of decision.warnings) lines.push(`> [!WARNING]`, `> ${warning}`, "");
   if (decision.kind === "refuse") lines.push(decision.message, "");
@@ -350,5 +426,17 @@ function factoryVersion(factoryRoot: string): string {
     return (JSON.parse(readFileSync(join(factoryRoot, "package.json"), "utf8")) as { version: string }).version;
   } catch {
     return "0.0.0";
+  }
+}
+
+/** The pool mode is on when the client has enrolled at least one login: the state branch lists an account (§6). */
+async function codexPoolOn(io: RouterIO): Promise<boolean> {
+  if (!io.poolEnrolled) return false;
+  try {
+    return await io.poolEnrolled();
+  } catch (error) {
+    // Off, not guessed on: the run falls back to whatever other Codex credential the client set.
+    console.log(`::warning::couldn't read the Codex login pool, so the pool mode is off for this run: ${error instanceof Error ? error.message : String(error)}`);
+    return false;
   }
 }

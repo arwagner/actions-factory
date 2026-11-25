@@ -14850,6 +14850,201 @@ import { randomUUID } from "node:crypto";
 import { appendFileSync, readFileSync as readFileSync3 } from "node:fs";
 import { join as join4 } from "node:path";
 
+// src/pool/pool.ts
+var STATE_BRANCH = "factory-auth-state";
+var STATE_FILE = "pool.json";
+function emptyState() {
+  return { version: 1, accounts: {} };
+}
+
+// src/pool/command.ts
+var POOL_ENVIRONMENT = "codex-pool";
+var POOL_SESSIONS = Array.from({ length: 8 }, (_, i) => `slot-${String(i + 1).padStart(2, "0")}`);
+function loginStatuses(state) {
+  return Object.entries(state.accounts).map(([alias, a]) => {
+    const base = { alias, sessionId: a.sessionId };
+    if (a.quarantine) return { ...base, state: "quarantined", reason: a.quarantine.reason };
+    if (a.lease) return { ...base, state: "leased", owner: `run ${a.lease.runId} attempt ${a.lease.attempt}` };
+    return { ...base, state: "free" };
+  });
+}
+
+// src/pool/summary.ts
+function poolAlias(alias) {
+  return /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(alias) ? alias : "(unrecognized login alias)";
+}
+
+// src/pool/doctor.ts
+async function poolDoctorChecks({ store, github, writer, configured }) {
+  const [env, state] = await Promise.allSettled([github.environment(POOL_ENVIRONMENT), store.read()]);
+  const environment = env.status === "fulfilled" ? env.value : void 0;
+  const snapshot = state.status === "fulfilled" ? state.value : void 0;
+  if (!configured && !writer && !environment && !snapshot?.token) return void 0;
+  const checks = [];
+  const add = (name, ok, detail, fix) => {
+    checks.push({ name: `Codex pool: ${name}`, ok, detail, ...ok ? {} : { fix } });
+  };
+  add(
+    "environment",
+    Boolean(environment),
+    environment ? "exists" : env.status === "rejected" ? "could not read it" : "missing",
+    "Create the `codex-pool` environment and allow the workflow to read it."
+  );
+  if (environment) {
+    const protectedByRule = environment.selectedBranches && await github.hasBranchRule(POOL_ENVIRONMENT).catch(() => false);
+    add(
+      "branch rules",
+      protectedByRule,
+      protectedByRule ? "selected branches, with a branch rule" : "no verified branch rule",
+      "Choose Selected branches and tags and add a branch rule for the trusted client branch. Check Actions read access if a rule exists."
+    );
+  }
+  add(
+    "state branch",
+    Boolean(snapshot?.token),
+    snapshot?.token ? "exists" : state.status === "rejected" ? "could not read it" : "missing",
+    "Check that `FACTORY_TOKEN` can read Contents and run `node dist/pool.js init` to create the branch if missing."
+  );
+  const status = writer && environment ? await writer.probeEnvironmentSecretWrite(POOL_ENVIRONMENT).catch(() => 0) : void 0;
+  add(
+    "save-back token",
+    status === 422,
+    !writer ? "not set" : !environment ? "set, but no environment to check" : status === 422 ? "can write environment secrets" : status ? `GitHub answered ${status}` : "no answer from GitHub",
+    "Set or replace the repository secret `CODEX_POOL_TOKEN` with a client-scoped token with Environments write. Recheck after the environment exists."
+  );
+  if (snapshot?.token) {
+    const logins = loginStatuses(snapshot.state);
+    if (logins.length === 0) add("logins", false, "none enrolled", "Enroll a fresh login with `node dist/pool.js seed`.");
+    for (const login of logins) {
+      const detail = login.state === "leased" && /^run \d+ attempt \d+$/.test(login.owner ?? "") ? `leased by ${login.owner}` : login.state;
+      add(poolAlias(login.alias), login.state !== "quarantined", detail, "Inspect with `node dist/pool.js check`, then reseed or remove the quarantined login.");
+    }
+  }
+  return checks;
+}
+
+// src/pool/github.ts
+function poolGitHub(token, owner, repo, baseUrl = "https://api.github.com") {
+  const call = async (method, path, body, okStatuses = []) => {
+    const response = await fetch(`${baseUrl}${path}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "actions-factory"
+      },
+      body: body === void 0 ? void 0 : JSON.stringify(body)
+    });
+    if (!response.ok && !okStatuses.includes(response.status)) {
+      throw new Error(`GitHub ${method} ${path} failed: ${response.status} ${await response.text()}`);
+    }
+    const text = response.ok ? await response.text() : "";
+    return { status: response.status, json: text ? JSON.parse(text) : void 0 };
+  };
+  const repoPath = `/repos/${owner}/${repo}`;
+  const env = (name) => `${repoPath}/environments/${encodeURIComponent(name)}`;
+  return {
+    async repoExists() {
+      return (await call("GET", repoPath, void 0, [404])).status !== 404;
+    },
+    async environment(name) {
+      const found = await call("GET", env(name), void 0, [404]);
+      if (found.status === 404) return void 0;
+      const policy = found.json.deployment_branch_policy;
+      return { selectedBranches: policy?.custom_branch_policies === true };
+    },
+    async hasBranchRule(name) {
+      for (let page = 1; ; page++) {
+        const { json } = await call("GET", `${env(name)}/deployment-branch-policies?per_page=100&page=${page}`);
+        const { branch_policies: policies } = json;
+        if (policies.some((policy) => policy.type !== "tag")) return true;
+        if (policies.length < 100) return false;
+      }
+    },
+    async probeEnvironmentSecretWrite(name) {
+      return (await call("PUT", `${env(name)}/secrets/CODEX_POOL_DOCTOR_PROBE`, {}, [400, 401, 403, 404, 409, 422])).status;
+    },
+    async environmentKey(name) {
+      const key = (await call("GET", `${env(name)}/secrets/public-key`)).json;
+      return { keyId: key.key_id, key: key.key };
+    },
+    async putEnvironmentSecret(name, secret, encrypted) {
+      await call("PUT", `${env(name)}/secrets/${encodeURIComponent(secret)}`, { encrypted_value: encrypted.value, key_id: encrypted.keyId });
+    },
+    async deleteEnvironmentSecret(name, secret) {
+      await call("DELETE", `${env(name)}/secrets/${encodeURIComponent(secret)}`, void 0, [404]);
+    },
+    async repositoryKey() {
+      const key = (await call("GET", `${repoPath}/actions/secrets/public-key`)).json;
+      return { keyId: key.key_id, key: key.key };
+    },
+    async hasRepositorySecret(name) {
+      return (await call("GET", `${repoPath}/actions/secrets/${encodeURIComponent(name)}`, void 0, [404])).status === 200;
+    },
+    async putRepositorySecret(name, secret) {
+      await call("PUT", `${repoPath}/actions/secrets/${encodeURIComponent(name)}`, { encrypted_value: secret.value, key_id: secret.keyId });
+    },
+    async getVariable(name) {
+      const found = await call("GET", `${repoPath}/actions/variables/${encodeURIComponent(name)}`, void 0, [404]);
+      return found.status === 404 ? void 0 : found.json.value;
+    },
+    async setVariable(name, value) {
+      const created = await call("POST", `${repoPath}/actions/variables`, { name, value }, [409, 422]);
+      if (created.status === 409 || created.status === 422) {
+        await call("PATCH", `${repoPath}/actions/variables/${encodeURIComponent(name)}`, { name, value });
+      }
+    },
+    async runEnded(run2) {
+      const { json } = await call("GET", `${repoPath}/actions/runs/${run2.runId}/attempts/${run2.attempt}`);
+      return json.status === "completed";
+    }
+  };
+}
+
+// src/pool/store.ts
+function gitHubPoolStore(token, owner, repo, baseUrl = "https://api.github.com") {
+  const call = async (method, path, body, okStatuses = []) => {
+    const response = await fetch(`${baseUrl}/repos/${owner}/${repo}${path}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "actions-factory"
+      },
+      body: body === void 0 ? void 0 : JSON.stringify(body)
+    });
+    if (!response.ok && !okStatuses.includes(response.status)) {
+      throw new Error(`GitHub ${method} ${path} failed: ${response.status} ${await response.text()}`);
+    }
+    return { status: response.status, json: response.ok ? await response.json() : void 0 };
+  };
+  return {
+    async read() {
+      const ref = await call("GET", `/git/ref/heads/${STATE_BRANCH}`, void 0, [404]);
+      if (ref.status === 404) return { state: emptyState(), token: void 0 };
+      const head = ref.json.object.sha;
+      const file = await call("GET", `/contents/${STATE_FILE}?ref=${head}`, void 0, [404]);
+      if (file.status === 404) return { state: emptyState(), token: head };
+      const content = file.json.content;
+      return { state: JSON.parse(Buffer.from(content, "base64").toString("utf8")), token: head };
+    },
+    async write(state, expected) {
+      const blob = (await call("POST", "/git/blobs", { content: `${JSON.stringify(state, null, 2)}
+`, encoding: "utf-8" })).json;
+      const tree = (await call("POST", "/git/trees", { tree: [{ path: STATE_FILE, mode: "100644", type: "blob", sha: blob.sha }] })).json;
+      const commit = (await call("POST", "/git/commits", {
+        message: "factory: update auth pool state",
+        tree: tree.sha,
+        parents: expected ? [expected] : []
+      })).json;
+      const result = expected === void 0 ? await call("POST", "/git/refs", { ref: `refs/heads/${STATE_BRANCH}`, sha: commit.sha }, [422]) : await call("PATCH", `/git/refs/heads/${STATE_BRANCH}`, { sha: commit.sha, force: false }, [422]);
+      return result.status !== 422;
+    }
+  };
+}
+
 // src/router/github.ts
 function gitHubApi(token, owner, repo, baseUrl = "https://api.github.com") {
   const call = async (method, path, body, okStatuses = []) => {
@@ -14910,6 +15105,7 @@ function gitHubApi(token, owner, repo, baseUrl = "https://api.github.com") {
       return {
         title: issue.title,
         body: issue.body ?? "",
+        author: issue.user?.login,
         isPullRequest: issue.pull_request !== void 0,
         open: issue.state === "open",
         labels: issue.labels.map((l) => l.name)
@@ -16186,7 +16382,7 @@ function startOfDay(now, timeZone) {
 }
 
 // src/router/version.ts
-var STUB_VERSION = "1.0.0";
+var STUB_VERSION = "1.1.0";
 var MIN_STUB_VERSION = "1.0.0";
 
 // src/router/doctor.ts
@@ -16343,6 +16539,11 @@ async function runRouter(io) {
       warnings: decision.warnings
     };
   }
+  const trigger = event.payload.label?.name;
+  const codexPool = decision.kind === "run" && !io.hasDirectCodexCredential && agentJobSettings(loaded.config, decision.task).agent === "codex" && await codexPoolOn(io);
+  if (codexPool && decision.kind === "run") {
+    decision = await gatePoolAuthors(decision, { io, loaded, reader, writer, trigger });
+  }
   if (decision.kind === "run" && "number" in decision.subject) {
     decision = await applyLimits(decision, io, loaded, reader);
   }
@@ -16364,7 +16565,10 @@ async function runRouter(io) {
   let checks;
   if (doctor) {
     checks = await doctorChecks({ loaded, writer, stubVersion: io.stubVersion, labelsError });
-    io.setOutput("doctor-agents", JSON.stringify(doctorAgents(loaded)));
+    const agents = doctorAgents(loaded);
+    const pool = !io.hasDirectCodexCredential && agents.some(({ agent }) => agent === "codex") ? await io.poolDoctor?.() : void 0;
+    if (pool) checks.push(...pool);
+    io.setOutput("doctor-agents", JSON.stringify(pool ? agents.filter(({ agent }) => agent !== "codex") : agents));
   }
   let tickReport;
   if (decision.kind === "sweep") {
@@ -16373,7 +16577,6 @@ async function runRouter(io) {
   if (decision.kind === "sweep" && writer) {
     tickReport = await tick({ config: loaded.config, reader, writer, now: io.now ?? /* @__PURE__ */ new Date(), runId: io.runId });
   }
-  const trigger = event.payload.label?.name;
   const assignee = loaded.ok ? loaded.config.assignee : void 0;
   if (decision.kind === "run" && "number" in decision.subject) {
     if (trigger) await writer.removeLabel(decision.subject.number, trigger);
@@ -16393,7 +16596,9 @@ async function runRouter(io) {
   io.setOutput("decision", JSON.stringify(decision));
   if (decision.kind === "run") {
     io.setOutput("task", decision.task);
-    io.setOutput("agent-job", JSON.stringify(agentJobSettings(loaded.config, decision.task)));
+    const settings = agentJobSettings(loaded.config, decision.task);
+    io.setOutput("agent-job", JSON.stringify(settings));
+    io.setOutput("codex-pool", String(codexPool));
     if (decision.subject.kind === "pr") {
       const pull = await reader.pullInfo(decision.subject.number);
       io.setOutput("head-sha", pull.headSha);
@@ -16407,6 +16612,57 @@ async function runRouter(io) {
     }
   }
   return decision;
+}
+function poolAuthorRefusal(subject, warnings) {
+  const item = subject.kind === "pr" ? "pull request" : "issue";
+  return {
+    kind: "refuse",
+    code: "pool-author",
+    message: `Codex ChatGPT-login mode only runs on items opened by someone with write access. A maintainer can open a new ${item} under their own name.`,
+    subject,
+    warnings
+  };
+}
+async function gatePoolAuthors(decision, ctx) {
+  const { subject, warnings } = decision;
+  const permissions = /* @__PURE__ */ new Map();
+  const check = async (number) => {
+    const { author, isPullRequest } = await ctx.reader.getIssue(number);
+    if (author && !permissions.has(author)) {
+      permissions.set(author, ["admin", "write"].includes(await ctx.reader.permission(author)));
+    }
+    return { allowed: author !== void 0 && permissions.get(author) === true, kind: isPullRequest ? "pr" : "issue" };
+  };
+  if ("number" in subject) {
+    return (await check(subject.number)).allowed ? decision : poolAuthorRefusal(subject, warnings);
+  }
+  if (subject.kind === "repo") {
+    if (subject.origin === void 0) return decision;
+    const { allowed, kind } = await check(subject.origin);
+    return allowed ? decision : poolAuthorRefusal({ kind, number: subject.origin }, warnings);
+  }
+  const found = new Set((await ctx.reader.searchIssues(subject.query)).map((item) => item.number));
+  const candidates = subject.origin === void 0 ? found : /* @__PURE__ */ new Set([...found, subject.origin]);
+  let origin = subject.origin;
+  const numbers = [];
+  for (const number of candidates) {
+    const { allowed, kind } = await check(number);
+    if (allowed) {
+      if (found.has(number)) numbers.push(number);
+    } else {
+      if (number === origin) origin = void 0;
+      await postRefusal(poolAuthorRefusal({ kind, number }, warnings), {
+        ...ctx,
+        trigger: number === subject.origin ? ctx.trigger : void 0
+      });
+    }
+  }
+  if (numbers.length === 0 && (found.size > 0 || origin !== subject.origin)) {
+    const message = "No eligible items remain for this Codex ChatGPT-login batch.";
+    if (origin !== void 0) return { kind: "refuse", code: "pool-author", message, subject: { ...subject, origin }, warnings };
+    return { kind: "ignore", reason: message, warnings };
+  }
+  return { ...decision, subject: { kind: "batch", query: subject.query, numbers, ...origin === void 0 ? {} : { origin } } };
 }
 async function resolveSweptItem(event, reader) {
   const payload = event.payload;
@@ -16519,7 +16775,7 @@ function summaryFor(decision, loaded, tickReport, checks, details) {
   const title = checks ? `doctor: ${failed ? `${failed} problem${failed === 1 ? "" : "s"}` : "all checks pass"}` : headline(decision);
   const lines = [`### actions-factory: ${title}`, ""];
   if (details) lines.push(details, "");
-  if (checks) lines.push(renderChecks(checks), "", "The agent credentials are checked in the doctor's agent job.", "");
+  if (checks) lines.push(renderChecks(checks), "", "Direct agent credentials are checked in the doctor's agent job. The doctor doesn't use pooled logins.", "");
   if (tickReport) lines.push(tickReport.length > 0 ? tickReport.join("\n") : "Nothing is due or waiting.", "");
   for (const warning of decision.warnings) lines.push(`> [!WARNING]`, `> ${warning}`, "");
   if (decision.kind === "refuse") lines.push(decision.message, "");
@@ -16573,6 +16829,15 @@ function factoryVersion(factoryRoot) {
     return "0.0.0";
   }
 }
+async function codexPoolOn(io) {
+  if (!io.poolEnrolled) return false;
+  try {
+    return await io.poolEnrolled();
+  } catch (error) {
+    console.log(`::warning::couldn't read the Codex login pool, so the pool mode is off for this run: ${error instanceof Error ? error.message : String(error)}`);
+    return false;
+  }
+}
 
 // src/router/main.ts
 async function main() {
@@ -16584,6 +16849,11 @@ async function main() {
   };
   const [owner, repo] = required("GITHUB_REPOSITORY").split("/");
   const temp = required("RUNNER_TEMP");
+  const apiUrl = env("GITHUB_API_URL");
+  const githubToken = required("GITHUB_TOKEN");
+  const factoryToken = env("FACTORY_TOKEN");
+  const poolToken = env("CODEX_POOL_TOKEN");
+  const poolStore = gitHubPoolStore(factoryToken ?? githubToken, owner, repo, apiUrl);
   await runRouter({
     eventName: required("GITHUB_EVENT_NAME"),
     payload: JSON.parse(readFileSync3(required("GITHUB_EVENT_PATH"), "utf8")),
@@ -16592,9 +16862,17 @@ async function main() {
     cacheDir: join4(temp, "factory-templates"),
     stubVersion: env("STUB_VERSION"),
     factorySha: env("FACTORY_SHA"),
-    factoryToken: env("FACTORY_TOKEN"),
-    githubToken: required("GITHUB_TOKEN"),
-    api: (token) => gitHubApi(token, owner, repo, env("GITHUB_API_URL")),
+    factoryToken,
+    githubToken,
+    api: (token) => gitHubApi(token, owner, repo, apiUrl),
+    hasDirectCodexCredential: env("HAS_DIRECT_CODEX_CREDENTIAL") === "true",
+    poolEnrolled: factoryToken ? async () => Object.keys((await poolStore.read()).state.accounts).length > 0 : void 0,
+    poolDoctor: () => poolDoctorChecks({
+      store: poolStore,
+      github: poolGitHub(githubToken, owner, repo, apiUrl),
+      writer: poolToken ? poolGitHub(poolToken, owner, repo, apiUrl) : void 0,
+      configured: env("CODEX_POOL_CONFIGURED") === "true"
+    }),
     runId: Number(env("GITHUB_RUN_ID")) || void 0,
     runUrl: `${env("GITHUB_SERVER_URL")}/${owner}/${repo}/actions/runs/${env("GITHUB_RUN_ID")}`,
     summary: (markdown) => appendFileSync(required("GITHUB_STEP_SUMMARY"), `${markdown}
