@@ -9,7 +9,9 @@ Decided in: Safety model (#14), cross-owner test (#18). See ADR 0004 and ADR 000
 
 ## Author gate for Codex ChatGPT logins
 
-In the Codex ChatGPT-login mode (section 6), the router also refuses items whose author lacks write access, with a comment. A leased login is the client's own subscription, so outsiders can't spend it or aim the agent at it.
+Before a Codex task can lease a ChatGPT login (section 6), the router checks the current write access of the person who opened each issue or PR. It checks the author separately from the labeler because an outsider can edit their own issue after a writer labels it. The body is still attributed to its original author.
+
+The router comments on refused items so a maintainer can open a new issue or PR under their own name. In a batch it excludes only the refused items and passes the checked list to the agent job, which does not search again. API-key and access-token runs keep the existing labeler and comment checks.
 
 ## Merge consent
 

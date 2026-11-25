@@ -99,6 +99,7 @@ jobs:
           FACTORY_ROOT: ${{ steps.factory.outputs.root }}
           FACTORY_SHA: ${{ steps.factory.outputs.sha }}
           STUB_VERSION: ${{ inputs.stub-version }}
+          HAS_DIRECT_CODEX_CREDENTIAL: ${{ secrets.OPENAI_API_KEY != '' || secrets.CODEX_ACCESS_TOKEN != '' }}
           FACTORY_TOKEN: ${{ secrets.FACTORY_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}
         run: node "$FACTORY_ROOT/dist/router.js"

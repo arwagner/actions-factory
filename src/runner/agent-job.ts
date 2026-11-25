@@ -282,6 +282,12 @@ async function gatherSubject(io: AgentJobIO): Promise<{ items: PromptItem[]; bat
     case "pr":
       return { items: [await item(io.subject.number, io.subject.kind)] };
     case "batch": {
+      // For a pool-backed batch, only fetch the items whose authors the router approved.
+      if (io.subject.numbers !== undefined) {
+        const items = [];
+        for (const number of io.subject.numbers) items.push(await item(number, "issue"));
+        return { items, batchNumbers: io.subject.numbers };
+      }
       const found = await api.searchIssues(io.subject.query);
       const items = [];
       for (const issue of found) items.push(await item(issue.number, "issue", issue.title, issue.body));
