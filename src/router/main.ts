@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { appendFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { poolDoctorChecks } from "../pool/doctor.js";
+import { poolGitHub } from "../pool/github.js";
 import { gitHubPoolStore } from "../pool/store.js";
 import { gitHubApi } from "./github.js";
 import { runRouter } from "./run.js";
@@ -15,6 +17,11 @@ async function main(): Promise<void> {
   };
   const [owner, repo] = required("GITHUB_REPOSITORY").split("/");
   const temp = required("RUNNER_TEMP");
+  const apiUrl = env("GITHUB_API_URL");
+  const githubToken = required("GITHUB_TOKEN");
+  const factoryToken = env("FACTORY_TOKEN");
+  const poolToken = env("CODEX_POOL_TOKEN");
+  const poolStore = gitHubPoolStore(factoryToken ?? githubToken, owner, repo, apiUrl);
   await runRouter({
     eventName: required("GITHUB_EVENT_NAME"),
     payload: JSON.parse(readFileSync(required("GITHUB_EVENT_PATH"), "utf8")),
@@ -23,13 +30,17 @@ async function main(): Promise<void> {
     cacheDir: join(temp, "factory-templates"),
     stubVersion: env("STUB_VERSION"),
     factorySha: env("FACTORY_SHA"),
-    factoryToken: env("FACTORY_TOKEN"),
-    githubToken: required("GITHUB_TOKEN"),
-    api: (token) => gitHubApi(token, owner, repo, env("GITHUB_API_URL")),
+    factoryToken,
+    githubToken,
+    api: (token) => gitHubApi(token, owner, repo, apiUrl),
     hasDirectCodexCredential: env("HAS_DIRECT_CODEX_CREDENTIAL") === "true",
-    poolEnrolled: env("FACTORY_TOKEN")
-      ? async () => Object.keys((await gitHubPoolStore(env("FACTORY_TOKEN")!, owner, repo, env("GITHUB_API_URL")).read()).state.accounts).length > 0
-      : undefined,
+    poolEnrolled: factoryToken ? async () => Object.keys((await poolStore.read()).state.accounts).length > 0 : undefined,
+    poolDoctor: () => poolDoctorChecks({
+      store: poolStore,
+      github: poolGitHub(githubToken, owner, repo, apiUrl),
+      writer: poolToken ? poolGitHub(poolToken, owner, repo, apiUrl) : undefined,
+      configured: env("CODEX_POOL_CONFIGURED") === "true",
+    }),
     runId: Number(env("GITHUB_RUN_ID")) || undefined,
     runUrl: `${env("GITHUB_SERVER_URL")}/${owner}/${repo}/actions/runs/${env("GITHUB_RUN_ID")}`,
     summary: (markdown) => appendFileSync(required("GITHUB_STEP_SUMMARY"), `${markdown}\n`),

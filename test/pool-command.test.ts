@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { authSecretName, check, init, recoverPool, seed, type PoolDeps } from "../src/pool/command.js";
+import { authSecretName, check, init, recoverPool, remove, seed, type PoolDeps } from "../src/pool/command.js";
 import { main } from "../src/pool/cli.js";
 import type { PoolGitHub } from "../src/pool/github.js";
-import { emptyState, type PoolState, type PoolStore, type Snapshot } from "../src/pool/pool.js";
+import { claim, emptyState, type PoolState, type PoolStore, type Snapshot } from "../src/pool/pool.js";
 
 class MemoryStore implements PoolStore {
   version: number | undefined;
@@ -27,8 +27,11 @@ function fakeGitHub(over: Partial<PoolGitHub> = {}) {
   const github: PoolGitHub = {
     repoExists: async () => true,
     environment: async () => ({ selectedBranches: true }),
+    hasBranchRule: async () => true,
+    probeEnvironmentSecretWrite: async () => 422,
     environmentKey: async () => ({ keyId: "k1", key: "pub" }),
     putEnvironmentSecret: async (_env, name, enc) => void secrets.set(name, enc.value),
+    deleteEnvironmentSecret: async (_env, name) => void secrets.delete(name),
     repositoryKey: async () => ({ keyId: "k2", key: "repo-pub" }),
     hasRepositorySecret: async (name) => repositorySecrets.has(name),
     putRepositorySecret: async (name, enc) => void repositorySecrets.set(name, enc.value),
@@ -69,6 +72,35 @@ describe("init", () => {
     await expect(init(deps(store, fakeGitHub({ environment: async () => undefined }).github))).rejects.toThrow(/create the "codex-pool"/);
     await expect(init(deps(store, fakeGitHub({ environment: async () => ({ selectedBranches: false }) }).github))).rejects.toThrow(/Selected branches/);
     await expect(init(deps(store, fakeGitHub({ repoExists: async () => false }).github))).rejects.toThrow(/repo/);
+  });
+});
+
+describe("remove", () => {
+  it("removes a quarantined login and frees its slot for a fresh enrollment", async () => {
+    const store = new MemoryStore();
+    const { github, secrets } = fakeGitHub();
+    const d = deps(store, github);
+    await seed(d, "work", "slot-01", login("initial"));
+    await claim(store, { owner: { runId: "1000", attempt: 1 } });
+    await expect(remove(d, "work")).rejects.toThrow(/active lease/);
+    expect(secrets.has("CODEX_AUTH_SLOT_01")).toBe(true);
+
+    await recoverPool(d, "slot-01");
+    await remove(d, "work");
+    expect(await check(store)).toEqual([]);
+    expect(secrets.has("CODEX_AUTH_SLOT_01")).toBe(false);
+
+    await seed(d, "work", "slot-01", login("fresh"));
+    expect(await check(store)).toMatchObject([{ alias: "work", sessionId: "slot-01", state: "free" }]);
+  });
+
+  it("leaves the login quarantined when GitHub refuses to delete its secret", async () => {
+    const store = new MemoryStore();
+    const { github } = fakeGitHub({ deleteEnvironmentSecret: async () => { throw new Error("denied"); } });
+    const d = deps(store, github);
+    await seed(d, "work", "slot-01", login("initial"));
+    await expect(remove(d, "work")).rejects.toThrow("denied");
+    expect(await check(store)).toMatchObject([{ alias: "work", state: "quarantined" }]);
   });
 });
 

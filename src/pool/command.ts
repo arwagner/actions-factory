@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { PoolGitHub } from "./github.js";
-import { credentialHash, quarantine, recover, update, type Account, type PoolStore, type RecoverReport } from "./pool.js";
+import { credentialHash, quarantine, recover, update, type Account, type PoolState, type PoolStore, type RecoverReport } from "./pool.js";
 import { transportKeyPair, type Seal } from "./seal.js";
 
 /** The environment holding the logins. */
@@ -111,6 +111,28 @@ export async function seed({ github, store, seal }: PoolDeps, alias: string, ses
   return { secret };
 }
 
+/** Retires an idle login before deleting its secret so another run cannot lease it mid-removal. */
+export async function remove({ github, store }: PoolDeps, alias: string): Promise<void> {
+  const account = await update(store, (state) => {
+    const login = Object.hasOwn(state.accounts, alias) ? state.accounts[alias] : undefined;
+    if (!login) throw new Error(`no login named "${alias}" in the pool`);
+    if (login.lease) throw new Error(`"${alias}" has an active lease; wait for the owner run to finish`);
+    if (login.quarantine) return { result: login };
+    login.quarantine = { reason: "retired for removal" };
+    return { state, result: login };
+  });
+
+  await github.deleteEnvironmentSecret(POOL_ENVIRONMENT, authSecretName(account.sessionId));
+  await update(store, (current) => {
+    const login = current.accounts[alias];
+    if (!login?.quarantine || login.lease || login.sessionId !== account.sessionId || login.hash !== account.hash) {
+      throw new Error("the pool changed during removal; check the login before trying again");
+    }
+    delete current.accounts[alias];
+    return { state: current, result: undefined };
+  });
+}
+
 export interface LoginStatus {
   alias: string;
   sessionId: string;
@@ -122,7 +144,10 @@ export interface LoginStatus {
 
 /** Read-only: each login's state and lease owner. */
 export async function check(store: PoolStore): Promise<LoginStatus[]> {
-  const { state } = await store.read();
+  return loginStatuses((await store.read()).state);
+}
+
+export function loginStatuses(state: PoolState): LoginStatus[] {
   return Object.entries(state.accounts).map(([alias, a]): LoginStatus => {
     const base = { alias, sessionId: a.sessionId };
     if (a.quarantine) return { ...base, state: "quarantined", reason: a.quarantine.reason };

@@ -1,10 +1,14 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { Adapter, AdapterInput, AdapterOutput } from "../src/agents/types.js";
-import type { PoolRun } from "../src/pool/lease-run.js";
+import { capture, type PoolHandoff, POOL_SEALED_FILE, type PoolRun, poolRun, sealHandoff } from "../src/pool/lease-run.js";
+import { credentialHash } from "../src/pool/pool.js";
+import { saveBack } from "../src/pool/save-back.js";
+import { openBox, sealBox, transportKeyPair } from "../src/pool/seal.js";
 import { type AgentJobIO, prepare, runTurn } from "../src/runner/agent-job.js";
+import { MemoryStore } from "./support/memory-store.js";
 import { FakeGitHub } from "./support/fake-github.js";
 import { tree } from "./support/tree.js";
 
@@ -76,6 +80,53 @@ function fakePool(order: string[], unavailable?: string) {
 const state = (io: AgentJobIO) => JSON.parse(readFileSync(join(io.workDir, "state.json"), "utf8"));
 
 describe("a turn in the pool mode", () => {
+  it("reuses a synthetic credential on the next task after an encrypted round trip", async () => {
+    const login = (refresh: string) => JSON.stringify({ tokens: { account_id: "fixture-account", refresh_token: refresh } });
+    const original = login("old-fixture-token");
+    const refreshed = login("new-fixture-token");
+    const store = new MemoryStore({ version: 1, accounts: { fixture: { sessionId: "slot-01", hash: credentialHash(original) } } });
+    const deps = {
+      dir: join(tree({}), "pool"),
+      owner: { runId: "100", attempt: 1 },
+      store: () => store,
+    };
+    const secrets = { CODEX_AUTH_SLOT_01: original };
+    const pair = await transportKeyPair();
+    await capture(deps, secrets, false);
+    const seen: string[] = [];
+    const adapter = scripted([], []);
+    adapter.run = async ({ authFile }) => {
+      seen.push(readFileSync(authFile!, "utf8"));
+      writeFileSync(authFile!, refreshed);
+      return { status: "ok" };
+    };
+    const io = job(adapter, poolRun(deps));
+    await prepare(io);
+    await runTurn(io, 1);
+
+    const out = tree({});
+    await sealHandoff(deps, pair.publicKey, out, sealBox);
+    const sealed = readFileSync(join(out, POOL_SEALED_FILE), "utf8");
+    expect(sealed).not.toContain("new-fixture-token");
+    const handoff = JSON.parse(await openBox(sealed, pair.privateKey)) as PoolHandoff;
+    expect(await saveBack({
+      github: {
+        environmentKey: async () => ({ keyId: "fixture-key", key: pair.publicKey }),
+        putEnvironmentSecret: async (_environment, _name, encrypted) => {
+          secrets.CODEX_AUTH_SLOT_01 = await openBox(encrypted.value, pair.privateKey);
+        },
+      },
+      store, seal: sealBox, owner: deps.owner, handoff, secrets,
+    })).toMatchObject([{ alias: "fixture", result: "saved" }]);
+
+    const next = { ...deps, owner: { runId: "101", attempt: 1 } };
+    await capture(next, secrets, false);
+    const nextJob = job(adapter, poolRun(next));
+    await prepare(nextJob);
+    await runTurn(nextJob, 1);
+    expect(seen).toEqual([original, refreshed]);
+  });
+
   it("moves to another login on a quota failure, and goes on from there", async () => {
     const seen: Array<string | undefined> = [];
     const { pool, events } = fakePool(["a", "b"]);
