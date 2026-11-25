@@ -10,7 +10,7 @@ import { tree } from "./support/tree.js";
  * A stand-in CLI: records its args (one per line), env and stdin, writes `lastMessage` to the file after `-o`,
  * copies any installed skills listing, then prints `output`.
  */
-function fakeCli(output: string, lastMessage = "") {
+function fakeCli(output: string, lastMessage = "", exit = 0) {
   const dir = tree({ "last.txt": lastMessage });
   const bin = join(dir, "cli");
   writeFileSync(
@@ -25,6 +25,7 @@ function fakeCli(output: string, lastMessage = "") {
       "cat <<'JSON'",
       output,
       "JSON",
+      `exit ${exit}`,
     ].join("\n"),
   );
   chmodSync(bin, 0o755);
@@ -97,12 +98,12 @@ describe("codex adapter", () => {
 
   it("fails a turn Codex reports as failed, and scrubs the key from the transcript", async () => {
     process.env.OPENAI_API_KEY = "sk-secret";
-    const cli = fakeCli(lines({ type: "error", message: "Incorrect API key provided: sk-secret" }, { type: "turn.failed" }));
+    const cli = fakeCli(lines({ type: "error", message: "Incorrect API key provided: sk-secret and unrelated-private-value" }, { type: "turn.failed" }));
     const io = input();
 
     const output = await codexAdapter({ install: async () => cli.bin }).run(io);
 
-    expect(output.status).toBe("failed");
+    expect(output).toMatchObject({ status: "failed", detail: "authentication failed" });
     expect(readFileSync(io.transcriptFile, "utf8")).not.toContain("sk-secret");
     expect(existsSync(io.planFile)).toBe(false);
   });
@@ -230,6 +231,17 @@ describe("copilot adapter", () => {
     expect(env).not.toContain("factory-secret");
     expect(cli.read("skills").trim()).toBe("standards");
     expect(JSON.parse(readFileSync(io.planFile, "utf8"))).toEqual({ outcome: "done" });
+  });
+
+  it("reports a safe reason or exit code without publishing Copilot stdout", async () => {
+    const rateLimited = fakeCli("429 Too Many Requests: unrelated-private-value", "", 1);
+    const crashed = fakeCli("could not read /private/input and unrelated-private-value", "", 3);
+    expect(await copilotAdapter({ install: async () => rateLimited.bin }).run(input())).toMatchObject({
+      status: "failed", detail: "quota or rate limit",
+    });
+    expect(await copilotAdapter({ install: async () => crashed.bin }).run(input())).toMatchObject({
+      status: "failed", detail: "exit 3",
+    });
   });
 
   it("denies the write tool for read-only tasks", async () => {

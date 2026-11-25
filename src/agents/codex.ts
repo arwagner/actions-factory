@@ -3,7 +3,7 @@ import { chmodSync, cpSync, existsSync, mkdtempSync, readFileSync, rmSync, write
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { agentEnv, installPinned, jsonLines, planFromMessage, READ_ONLY_PLAN, runCli } from "./cli.js";
-import { scrubValues } from "./scrub.js";
+import { failureDetail, scrubValues } from "./scrub.js";
 import type { Adapter, AdapterOutput } from "./types.js";
 
 /** Pinned per factory release; nothing installs "latest" at run time (§6). */
@@ -95,8 +95,10 @@ export function codexAdapter(options: CodexOptions = {}): Adapter {
         const status: AdapterOutput["status"] = timedOut ? "timed-out" : code !== 0 || failed ? "failed" : "ok";
         const result: AdapterOutput = { status, usage: usage(events) };
         if (status === "failed") {
-          const failure = classifyFailure(errorText(events));
+          const text = errorText(events);
+          const failure = classifyFailure(text);
           if (failure) result.failure = failure;
+          result.detail = failureDetail(text, code, failure);
         }
         if (leased) result.auth = handBack(input.authFile!, join(home, "auth.json"));
         return result;

@@ -14937,6 +14937,16 @@ var READ_ONLY_PLAN = "\n\nThis run can't write files. Don't write the plan file:
 function scrubValues(text, secrets) {
   return secrets.filter((s2) => s2.length >= 4).sort((a2, b2) => b2.length - a2.length).reduce((out, s2) => out.split(s2).join("***"), text);
 }
+function failureDetail(text, code, kind) {
+  const message = text ?? "";
+  if (kind === "quota" || /\b429\b|too many requests|quota|rate[_ -]?limit|usage[_ ]limit/i.test(message)) return "quota or rate limit";
+  if (/\b401\b/.test(message)) return "authentication failed (HTTP 401)";
+  if (kind === "auth" || /unauthori[sz]ed|authenticat|(?:invalid|incorrect) (?:API key|(?:access )?token|credential)/i.test(message)) return "authentication failed";
+  if (/\b403\b/.test(message)) return "access denied (HTTP 403)";
+  if (/access denied|forbidden/i.test(message)) return "access denied";
+  if (/\b50[0234]\b|service unavailable|bad gateway/i.test(message)) return "service unavailable";
+  return code === 0 ? "CLI reported an error" : `exit ${code}`;
+}
 
 // src/agents/claude.ts
 var CLAUDE_CODE_VERSION = "2.1.319";
@@ -14995,7 +15005,8 @@ function claudeAdapter(options = {}) {
       if (result?.structured_output !== void 0) writeFileSync(input.planFile, JSON.stringify(result.structured_output, null, 2));
       const usage3 = result ? { inputTokens: result.usage?.input_tokens, outputTokens: result.usage?.output_tokens, costUsd: result.total_cost_usd } : void 0;
       const status = timedOut ? "timed-out" : code !== 0 || !result || result.is_error ? "failed" : "ok";
-      return { status, usage: usage3 };
+      if (status !== "failed") return { status, usage: usage3 };
+      return { status, usage: usage3, detail: failureDetail(result?.result ?? stdout.trim().split("\n").pop(), code) };
     }
   };
 }
@@ -15077,8 +15088,10 @@ function codexAdapter(options = {}) {
         const status = timedOut ? "timed-out" : code !== 0 || failed ? "failed" : "ok";
         const result = { status, usage: usage(events) };
         if (status === "failed") {
-          const failure = classifyFailure(errorText(events));
+          const text = errorText(events);
+          const failure = classifyFailure(text);
           if (failure) result.failure = failure;
+          result.detail = failureDetail(text, code, failure);
         }
         if (leased) result.auth = handBack(input.authFile, join3(home, "auth.json"));
         return result;
@@ -15186,7 +15199,8 @@ function copilotAdapter(options = {}) {
           if (plan !== void 0) writeFileSync3(input.planFile, JSON.stringify(plan, null, 2));
         }
         const status = timedOut ? "timed-out" : code !== 0 ? "failed" : "ok";
-        return { status, usage: usage2(events) };
+        if (status !== "failed") return { status, usage: usage2(events) };
+        return { status, usage: usage2(events), detail: failureDetail(stdout.trim().split("\n").slice(-3).join(" "), code) };
       } finally {
         rmSync2(home, { recursive: true, force: true });
       }
@@ -20294,15 +20308,15 @@ async function runTurn(io, turn) {
     return;
   }
   if (adapter.credentials.length > 0 && !adapter.credentials.some((name) => io.env[name])) {
-    const agentError = `the ${adapter.name} agent has no credential. Set the ${adapter.credentials.map((n2) => `\`${n2}\``).join(" or ")} secret.`;
-    io.log(`::error::${agentError}`);
-    saveState(io, { ...state, agentStatus: "failed", turnsRun: turn, agentError });
+    const agentError2 = `the ${adapter.name} agent has no credential. Set the ${adapter.credentials.map((n2) => `\`${n2}\``).join(" or ")} secret.`;
+    io.log(`::error::${agentError2}`);
+    saveState(io, { ...state, agentStatus: "failed", turnsRun: turn, agentError: agentError2 });
     return;
   }
   if (io.pool && !io.pool.authFile() && io.pool.unavailable()) {
-    const agentError = `no Codex login was available: ${io.pool.unavailable()}.`;
-    io.log(`::error::${agentError}`);
-    saveState(io, { ...state, agentStatus: "failed", turnsRun: turn, agentError });
+    const agentError2 = `no Codex login was available: ${io.pool.unavailable()}.`;
+    io.log(`::error::${agentError2}`);
+    saveState(io, { ...state, agentStatus: "failed", turnsRun: turn, agentError: agentError2 });
     return;
   }
   saveState(io, { ...state, agentStatus: "timed-out", checksPassed: void 0, turnsRun: turn });
@@ -20336,19 +20350,19 @@ async function runTurn(io, turn) {
       if (!await io.pool.next(left())) break;
     }
   } catch (error) {
-    const agentError = `the ${adapter.name} adapter failed: ${error instanceof Error ? error.message : String(error)}`;
-    io.log(`::error::${agentError}`);
-    saveState(io, { ...state, agentStatus: "failed", checksPassed: void 0, turnsRun: turn, agentError });
+    const agentError2 = `the ${adapter.name} adapter failed: ${error instanceof Error ? error.message : String(error)}`;
+    io.log(`::error::${agentError2}`);
+    saveState(io, { ...state, agentStatus: "failed", checksPassed: void 0, turnsRun: turn, agentError: agentError2 });
     return;
   }
   result.usage = usageSoFar;
-  if (io.pool && result.failure === "quota" && !io.pool.authFile()) {
-    state.agentError = `every Codex login hit a usage limit or was busy: ${io.pool.unavailable() ?? "none left to try"}.`;
-  }
-  if (result.failure) io.log(`::warning::the ${adapter.name} run failed on ${result.failure === "auth" ? "an auth error: the login is bad" : "a quota or rate limit: try another login"}`);
+  const poolExhausted = io.pool && result.failure === "quota" && !io.pool.authFile();
+  const agentError = result.status !== "failed" ? void 0 : poolExhausted ? `every Codex login hit a usage limit or was busy: ${io.pool?.unavailable() ?? "none left to try"}.` : `the ${adapter.name} agent failed${result.detail ? `: ${result.detail}` : "."}`;
+  if (agentError) io.log(`::error::${agentError}`);
   saveState(io, {
     ...state,
     agentStatus: result.status,
+    agentError,
     checksPassed: void 0,
     turnsRun: turn,
     usage: addUsage(state.usage, result.usage),

@@ -26,9 +26,21 @@ export interface AdapterInput {
   authFile?: string;
 }
 
+export type FailureDetail =
+  | "authentication failed (HTTP 401)"
+  | "authentication failed"
+  | "access denied (HTTP 403)"
+  | "access denied"
+  | "quota or rate limit"
+  | "service unavailable"
+  | "CLI reported an error"
+  | `exit ${number}`;
+
 export interface AdapterOutput {
   status: "ok" | "failed" | "timed-out";
   usage?: { inputTokens?: number; outputTokens?: number; costUsd?: number };
+  /** A classification safe for run logs and public status comments, never CLI text. */
+  detail?: FailureDetail;
   /** Why a failed run failed, when the adapter can tell: a bad login (quarantine it) or a quota/rate limit (try another). */
   failure?: "auth" | "quota";
   /** Leased-login mode: the refreshed `auth.json` was written back to the leased path; `changed` says whether it differs. */

@@ -178,14 +178,17 @@ export async function runTurn(io: AgentJobIO, turn: number): Promise<void> {
     return;
   }
   result.usage = usageSoFar;
-  // The last login hit its limit and no other could be leased: say why, so the item is parked with a clear comment.
-  if (io.pool && result.failure === "quota" && !io.pool.authFile()) {
-    state.agentError = `every Codex login hit a usage limit or was busy: ${io.pool.unavailable() ?? "none left to try"}.`;
-  }
-  if (result.failure) io.log(`::warning::the ${adapter.name} run failed on ${result.failure === "auth" ? "an auth error: the login is bad" : "a quota or rate limit: try another login"}`);
+  // Preserve the more useful pool-exhaustion diagnosis. A successful round clears any stale error.
+  const poolExhausted = io.pool && result.failure === "quota" && !io.pool.authFile();
+  const agentError = result.status !== "failed" ? undefined
+    : poolExhausted
+      ? `every Codex login hit a usage limit or was busy: ${io.pool?.unavailable() ?? "none left to try"}.`
+      : `the ${adapter.name} agent failed${result.detail ? `: ${result.detail}` : "."}`;
+  if (agentError) io.log(`::error::${agentError}`);
   saveState(io, {
     ...state,
     agentStatus: result.status,
+    agentError,
     checksPassed: undefined,
     turnsRun: turn,
     usage: addUsage(state.usage, result.usage),

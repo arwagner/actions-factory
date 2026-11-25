@@ -49,6 +49,7 @@ Observed in #18:
 
 The only real control is which steps hold which secrets, hence the job split.
 
+- **Agent failure comments:** report a fixed diagnosis or process exit code, never text copied from CLI output.
 - **Transcripts:** uploaded as artifacts kept for 7 days, with every known secret value scrubbed out. On public repos they aren't uploaded unless the client opts in.
 - **Hooks from other repos:** they run in the apply job holding `FACTORY_TOKEN`. Trust them like any action you `uses:`, and pin them to a commit SHA.
 - **ChatGPT logins leak wider.** A leaked ChatGPT login reaches the whole account, unlike a spend-capped API key. v1 accepts that the agent can read its leased login, since Codex needs it. The mitigations are the author gate, a pool of the client's own logins, and keeping `CODEX_POOL_TOKEN` out of the agent job.

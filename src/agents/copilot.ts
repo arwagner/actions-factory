@@ -2,7 +2,7 @@ import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } 
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { agentEnv, installPinned, jsonLines, planFromMessage, READ_ONLY_PLAN, runCli } from "./cli.js";
-import { scrubValues } from "./scrub.js";
+import { failureDetail, scrubValues } from "./scrub.js";
 import type { Adapter, AdapterOutput } from "./types.js";
 
 /** Pinned per factory release; nothing installs "latest" at run time (§6). */
@@ -59,7 +59,8 @@ export function copilotAdapter(options: CopilotOptions = {}): Adapter {
           if (plan !== undefined) writeFileSync(input.planFile, JSON.stringify(plan, null, 2));
         }
         const status: AdapterOutput["status"] = timedOut ? "timed-out" : code !== 0 ? "failed" : "ok";
-        return { status, usage: usage(events) };
+        if (status !== "failed") return { status, usage: usage(events) };
+        return { status, usage: usage(events), detail: failureDetail(stdout.trim().split("\n").slice(-3).join(" "), code) };
       } finally {
         rmSync(home, { recursive: true, force: true });
       }

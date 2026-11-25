@@ -218,6 +218,19 @@ describe("the agent job", () => {
     expect(ran).toBe(true);
   });
 
+  it("passes the agent's own reason through", async () => {
+    const detail = "authentication failed (HTTP 401)";
+    const adapter = { name: "claude", credentials: [], run: async () => ({ status: "failed" as const, detail } as const), ping: async () => ({ ok: true, detail: "" }) };
+    const base = setup({}, { agent: "claude" });
+    const io = { ...base, adapters: { claude: adapter } };
+
+    await prepare(io);
+    await runTurn(io, 1);
+    await handoff(io);
+    expect(meta(io)).toMatchObject({ agentStatus: "failed", agentError: "the claude agent failed: authentication failed (HTTP 401)" });
+    expect(logs).toContain("::error::the claude agent failed: authentication failed (HTTP 401)");
+  });
+
   it("reports an adapter that throws as failed, with the reason, not as timed out", async () => {
     const broken = { name: "fake", credentials: [], run: async () => { throw new Error("Bad control character in JSON"); }, ping: async () => ({ ok: true, detail: "" }) };
     const io = { ...setup({}), adapters: { fake: broken } };

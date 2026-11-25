@@ -136,6 +136,14 @@ describe("applyRun", () => {
     expect(statusBody(42)).toContain(`stopped: ${agentError} To retry, add \`agent:implement\` again.`);
   });
 
+  it("shows the agent's own error text when the adapter reported one", async () => {
+    const agentError = "the claude agent failed: authentication failed (HTTP 401)";
+
+    await applyRun(io({ agentStatus: "failed", agentError, plan: undefined }));
+
+    expect(statusBody(42)).toContain(`stopped: ${agentError}`);
+  });
+
   describe("on a pull request", () => {
     const review = { ...implement, label: "agent:review", subject: "pr", writes: { ...writes, push: true } };
     const pr = { kind: "pr" as const, number: 7 };
