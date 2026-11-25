@@ -3518,6 +3518,7 @@ async function transportKeyPair() {
 var POOL_ENVIRONMENT = "codex-pool";
 var TRANSPORT_PUBLIC_VARIABLE = "CODEX_POOL_TRANSPORT_PUBLIC_KEY";
 var TRANSPORT_PRIVATE_SECRET = "CODEX_POOL_TRANSPORT_PRIVATE_KEY";
+var POOL_SESSIONS = Array.from({ length: 8 }, (_2, i2) => `slot-${String(i2 + 1).padStart(2, "0")}`);
 var NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 var authSecretName = (sessionId) => `CODEX_AUTH_${sessionId.toUpperCase().replace(/-/g, "_")}`;
 async function init({ github, store, seal }) {
@@ -3532,13 +3533,12 @@ async function init({ github, store, seal }) {
   if (stateBranchCreated && !await store.write(snapshot.state, void 0)) {
     return init({ github, store, seal });
   }
-  const secrets = await github.listEnvironmentSecrets(POOL_ENVIRONMENT);
   const published = await github.getVariable(TRANSPORT_PUBLIC_VARIABLE);
-  const hasPrivate = secrets.includes(TRANSPORT_PRIVATE_SECRET);
+  const hasPrivate = await github.hasRepositorySecret(TRANSPORT_PRIVATE_SECRET);
   if (published && hasPrivate) return { stateBranchCreated, transportKeyCreated: false };
   const pair = await transportKeyPair();
-  const key = await github.environmentKey(POOL_ENVIRONMENT);
-  await github.putEnvironmentSecret(POOL_ENVIRONMENT, TRANSPORT_PRIVATE_SECRET, { keyId: key.keyId, value: await seal(pair.privateKey, key.key) });
+  const key = await github.repositoryKey();
+  await github.putRepositorySecret(TRANSPORT_PRIVATE_SECRET, { keyId: key.keyId, value: await seal(pair.privateKey, key.key) });
   await github.setVariable(TRANSPORT_PUBLIC_VARIABLE, pair.publicKey);
   return { stateBranchCreated, transportKeyCreated: true };
 }
@@ -3558,6 +3558,7 @@ async function seed({ github, store, seal }, alias, sessionId, authJson) {
   for (const [what, value] of [["account", alias], ["session", sessionId]]) {
     if (!NAME.test(value)) throw new Error(`the ${what} ID must be letters, digits, "-" and "_" (got "${value}")`);
   }
+  if (!POOL_SESSIONS.includes(sessionId)) throw new Error("session ID must be slot-01 through slot-08");
   const seedHash = sha(refreshToken(authJson));
   const secret = authSecretName(sessionId);
   const refusal = (accounts) => {
@@ -3640,14 +3641,15 @@ function poolGitHub(token, owner, repo, baseUrl = "https://api.github.com") {
     async putEnvironmentSecret(name, secret, encrypted) {
       await call("PUT", `${env(name)}/secrets/${encodeURIComponent(secret)}`, { encrypted_value: encrypted.value, key_id: encrypted.keyId });
     },
-    async listEnvironmentSecrets(name) {
-      const names = [];
-      for (let page = 1; ; page++) {
-        const { json } = await call("GET", `${env(name)}/secrets?per_page=100&page=${page}`);
-        const batch = json.secrets.map((s2) => s2.name);
-        names.push(...batch);
-        if (batch.length < 100) return names;
-      }
+    async repositoryKey() {
+      const key = (await call("GET", `${repoPath}/actions/secrets/public-key`)).json;
+      return { keyId: key.key_id, key: key.key };
+    },
+    async hasRepositorySecret(name) {
+      return (await call("GET", `${repoPath}/actions/secrets/${encodeURIComponent(name)}`, void 0, [404])).status === 200;
+    },
+    async putRepositorySecret(name, secret) {
+      await call("PUT", `${repoPath}/actions/secrets/${encodeURIComponent(name)}`, { encrypted_value: secret.value, key_id: secret.keyId });
     },
     async getVariable(name) {
       const found = await call("GET", `${repoPath}/actions/variables/${encodeURIComponent(name)}`, void 0, [404]);
@@ -3712,7 +3714,7 @@ function gitHubPoolStore(token, owner, repo, baseUrl = "https://api.github.com")
 // src/pool/cli.ts
 var USAGE = `usage: pool [--repo owner/repo] <command>
   init
-  seed <account> <session> <auth.json>
+  seed <account> <slot-01..slot-08> <auth.json>
   check
   recover [--force SESSION]
 Needs CODEX_POOL_TOKEN. The repo defaults to GITHUB_REPOSITORY.`;

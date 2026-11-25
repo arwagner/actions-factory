@@ -28,19 +28,19 @@ Run it from a machine you trust, from a checkout of the factory release you use,
 ```sh
 export CODEX_POOL_TOKEN=...
 node dist/pool.js --repo you/your-repo init
-node dist/pool.js --repo you/your-repo seed work s1 ./auth.json
+node dist/pool.js --repo you/your-repo seed work slot-01 ./auth.json
 node dist/pool.js --repo you/your-repo check
 node dist/pool.js --repo you/your-repo recover [--force SESSION]
 ```
 
-1. **Enrollment.** Create the `codex-pool` environment in the repo's settings and limit its deployment branches to selected branches. Then `init` checks both, creates the `factory-auth-state` branch if it is missing, and makes the transport key pair: the public key goes in the repository variable `CODEX_POOL_TRANSPORT_PUBLIC_KEY` (the agent job reads it) and the private key in the `codex-pool` secret `CODEX_POOL_TRANSPORT_PRIVATE_KEY`. Rerunning `init` keeps an existing pair.
+1. **Enrollment.** Create the `codex-pool` environment in the repo's settings and limit its deployment branches to selected branches. Then `init` checks both, creates the `factory-auth-state` branch if it is missing, and makes the transport key pair: the public key goes in the repository variable `CODEX_POOL_TRANSPORT_PUBLIC_KEY` (the agent job reads it) and the private key in the repository secret `CODEX_POOL_TRANSPORT_PRIVATE_KEY`. Rerunning `init` keeps an existing pair. The enrollment token needs repository Secrets write to store the private key. Keep the private key and the write-back token out of the `codex-pool` environment.
 2. **Seeding.** Make each login fresh, never from a copied local `auth.json`:
 
    ```sh
    CODEX_HOME=$(mktemp -d) codex -c 'cli_auth_credentials_store="file"' login --device-auth
    ```
 
-   Then `seed <account> <session> <auth.json>` stores it as the `codex-pool` secret `CODEX_AUTH_<SESSION>` (the session in capitals, `-` as `_`) and adds it to the pool. It refuses a repeated account or session ID, and a login whose refresh token is already seeded: two copies of one login invalidate each other.
+   Then `seed <account> <slot> <auth.json>` stores it as a `codex-pool` environment secret (for example, `slot-01` → `CODEX_AUTH_SLOT_01`) and adds it to the pool. Use a free slot from `slot-01` through `slot-08`. It refuses a repeated account or slot, and a login whose refresh token is already seeded: two copies of one login invalidate each other.
 3. **Checking.** `check` is read-only. It shows each login as free, leased (with the owning run and attempt) or quarantined (with the reason).
 4. **Recovery.** `recover` quarantines logins whose owner run has ended without releasing them. A lease never expires by time. If GitHub can't say whether a run ended, the login stays reserved and `recover` exits non-zero. `recover --force SESSION` quarantines that session's login now, whoever holds it.
 

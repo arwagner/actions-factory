@@ -1,0 +1,280 @@
+# A separate secrets context keeps save-back credentials out of the agent job.
+name: agent
+
+on:
+  workflow_call:
+    inputs:
+      decision:
+        type: string
+        required: true
+      agent-job:
+        type: string
+        required: true
+      head-sha:
+        type: string
+        required: true
+      base-ref:
+        type: string
+        required: true
+      factory-repository:
+        type: string
+        required: true
+      factory-sha:
+        type: string
+        required: true
+      codex-pool:
+        type: boolean
+        required: true
+    secrets:
+      CODEX_AUTH_SLOT_01:
+        required: false
+      CODEX_AUTH_SLOT_02:
+        required: false
+      CODEX_AUTH_SLOT_03:
+        required: false
+      CODEX_AUTH_SLOT_04:
+        required: false
+      CODEX_AUTH_SLOT_05:
+        required: false
+      CODEX_AUTH_SLOT_06:
+        required: false
+      CODEX_AUTH_SLOT_07:
+        required: false
+      CODEX_AUTH_SLOT_08:
+        required: false
+      FACTORY_TOKEN:
+        required: false
+      FACTORY_CHECK_ENV:
+        required: false
+      ANTHROPIC_API_KEY:
+        required: false
+      CLAUDE_CODE_OAUTH_TOKEN:
+        required: false
+      OPENAI_API_KEY:
+        required: false
+      CODEX_ACCESS_TOKEN:
+        required: false
+      COPILOT_GITHUB_TOKEN:
+        required: false
+
+jobs:
+  run:
+    runs-on: ${{ fromJSON(inputs.agent-job).runsOn }}
+    container: ${{ fromJSON(inputs.agent-job).container }}
+    timeout-minutes: ${{ fromJSON(inputs.agent-job).jobTimeout }}
+    environment: ${{ inputs.codex-pool && 'codex-pool' || '' }}
+    concurrency:
+      group: ${{ fromJSON(inputs.agent-job).repoWide && format('factory-{0}', github.repository) || format('factory-{0}-run-{1}', github.repository, github.run_id) }}
+      cancel-in-progress: false
+      queue: max
+    env:
+      AGENT: ${{ fromJSON(inputs.agent-job).agent }}
+      FACTORY_REPO_PRIVATE: ${{ github.event.repository.private }}
+      DECISION: ${{ inputs.decision }}
+    steps:
+      # A PR task works on the PR's head (same-repo only: forks are refused before this), with full history so the
+      # merge task can merge the base in. Everything else works on the default branch.
+      - name: Check out the client repo
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.head-sha }}
+          fetch-depth: ${{ inputs.head-sha != '' && 0 || 1 }}
+          persist-credentials: false
+
+      # The PR's base branch: the config comes from it, outside the work tree, so a PR can't change the rules it
+      # runs under; and it's fetched into the work clone as origin/<base>, for the merge task.
+      - name: Check out the pull request's base
+        if: inputs.head-sha != ''
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.base-ref }}
+          path: .factory-base
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Take the config from the base
+        if: inputs.head-sha != ''
+        env:
+          BASE_REF: ${{ inputs.base-ref }}
+        run: |
+          git fetch -q ./.factory-base "+HEAD:refs/remotes/origin/$BASE_REF"
+          mv .factory-base "$RUNNER_TEMP/factory-base"
+          echo "FACTORY_CONFIG_ROOT=$RUNNER_TEMP/factory-base" >> "$GITHUB_ENV"
+
+      - name: Fetch the factory at the pinned commit
+        env:
+          REPOSITORY: ${{ inputs.factory-repository }}
+          SHA: ${{ inputs.factory-sha }}
+          SERVER: ${{ github.server_url }}
+        run: |
+          dir="$RUNNER_TEMP/actions-factory"
+          git init -q "$dir"
+          git -C "$dir" fetch -q --depth 1 "$SERVER/$REPOSITORY" "$SHA"
+          git -C "$dir" -c advice.detachedHead=false checkout -q FETCH_HEAD
+          echo "FACTORY_ROOT=$dir" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: Cache the agent CLI
+        if: fromJSON(inputs.agent-job).cliVersion != 'none'
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.factory-agents
+          key: factory-agent-${{ env.AGENT }}-${{ fromJSON(inputs.agent-job).cliVersion }}-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Client setup
+        if: hashFiles('.factory/setup/action.yml') != ''
+        uses: ./.factory/setup
+
+      - name: Prepare
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node "$FACTORY_ROOT/dist/agent.js" prepare
+
+      - name: Check pool credential isolation
+        id: pool-isolation
+        if: inputs.codex-pool
+        env:
+          HAS_SAVE_CREDENTIALS: ${{ contains(toJSON(secrets), '"CODEX_POOL_TOKEN":') || contains(toJSON(secrets), '"CODEX_POOL_TRANSPORT_PRIVATE_KEY":') }}
+        run: |
+          if [ "$HAS_SAVE_CREDENTIALS" = true ]; then
+            echo "::error::Move the write-back credentials out of the codex-pool environment."
+            exit 1
+          fi
+
+      # The only step that reads the CODEX_AUTH_* secrets; it leases one login for the agent.
+      - name: Lease a Codex login
+        if: inputs.codex-pool && steps.pool-isolation.outcome == 'success'
+        env:
+          FACTORY_TOKEN: ${{ secrets.FACTORY_TOKEN }}
+          CODEX_AUTH_SLOT_01: ${{ secrets.CODEX_AUTH_SLOT_01 }}
+          CODEX_AUTH_SLOT_02: ${{ secrets.CODEX_AUTH_SLOT_02 }}
+          CODEX_AUTH_SLOT_03: ${{ secrets.CODEX_AUTH_SLOT_03 }}
+          CODEX_AUTH_SLOT_04: ${{ secrets.CODEX_AUTH_SLOT_04 }}
+          CODEX_AUTH_SLOT_05: ${{ secrets.CODEX_AUTH_SLOT_05 }}
+          CODEX_AUTH_SLOT_06: ${{ secrets.CODEX_AUTH_SLOT_06 }}
+          CODEX_AUTH_SLOT_07: ${{ secrets.CODEX_AUTH_SLOT_07 }}
+          CODEX_AUTH_SLOT_08: ${{ secrets.CODEX_AUTH_SLOT_08 }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          CODEX_ACCESS_TOKEN: ${{ secrets.CODEX_ACCESS_TOKEN }}
+        run: node "$FACTORY_ROOT/dist/agent.js" pool-capture
+
+      - name: Agent, round 1
+        if: always() && fromJSON(inputs.agent-job).turns >= 1
+        timeout-minutes: ${{ fromJSON(inputs.agent-job).stepTimeout }}
+        env:
+          FACTORY_TOKEN: ${{ inputs.codex-pool && secrets.FACTORY_TOKEN || '' }}
+          ANTHROPIC_API_KEY: ${{ env.AGENT == 'claude' && secrets.ANTHROPIC_API_KEY || '' }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ env.AGENT == 'claude' && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
+          OPENAI_API_KEY: ${{ env.AGENT == 'codex' && secrets.OPENAI_API_KEY || '' }}
+          CODEX_ACCESS_TOKEN: ${{ env.AGENT == 'codex' && secrets.CODEX_ACCESS_TOKEN || '' }}
+          COPILOT_GITHUB_TOKEN: ${{ env.AGENT == 'copilot' && secrets.COPILOT_GITHUB_TOKEN || '' }}
+        run: node "$FACTORY_ROOT/dist/agent.js" turn 1
+
+      - name: Checks, round 1
+        if: always() && fromJSON(inputs.agent-job).turns >= 1
+        env:
+          FACTORY_CHECK_ENV: ${{ secrets.FACTORY_CHECK_ENV }}
+        run: node "$FACTORY_ROOT/dist/agent.js" checks 1
+
+      - name: Agent, round 2
+        if: always() && fromJSON(inputs.agent-job).turns >= 2
+        timeout-minutes: ${{ fromJSON(inputs.agent-job).stepTimeout }}
+        env:
+          FACTORY_TOKEN: ${{ inputs.codex-pool && secrets.FACTORY_TOKEN || '' }}
+          ANTHROPIC_API_KEY: ${{ env.AGENT == 'claude' && secrets.ANTHROPIC_API_KEY || '' }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ env.AGENT == 'claude' && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
+          OPENAI_API_KEY: ${{ env.AGENT == 'codex' && secrets.OPENAI_API_KEY || '' }}
+          CODEX_ACCESS_TOKEN: ${{ env.AGENT == 'codex' && secrets.CODEX_ACCESS_TOKEN || '' }}
+          COPILOT_GITHUB_TOKEN: ${{ env.AGENT == 'copilot' && secrets.COPILOT_GITHUB_TOKEN || '' }}
+        run: node "$FACTORY_ROOT/dist/agent.js" turn 2
+
+      - name: Checks, round 2
+        if: always() && fromJSON(inputs.agent-job).turns >= 2
+        env:
+          FACTORY_CHECK_ENV: ${{ secrets.FACTORY_CHECK_ENV }}
+        run: node "$FACTORY_ROOT/dist/agent.js" checks 2
+
+      - name: Agent, round 3
+        if: always() && fromJSON(inputs.agent-job).turns >= 3
+        timeout-minutes: ${{ fromJSON(inputs.agent-job).stepTimeout }}
+        env:
+          FACTORY_TOKEN: ${{ inputs.codex-pool && secrets.FACTORY_TOKEN || '' }}
+          ANTHROPIC_API_KEY: ${{ env.AGENT == 'claude' && secrets.ANTHROPIC_API_KEY || '' }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ env.AGENT == 'claude' && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
+          OPENAI_API_KEY: ${{ env.AGENT == 'codex' && secrets.OPENAI_API_KEY || '' }}
+          CODEX_ACCESS_TOKEN: ${{ env.AGENT == 'codex' && secrets.CODEX_ACCESS_TOKEN || '' }}
+          COPILOT_GITHUB_TOKEN: ${{ env.AGENT == 'copilot' && secrets.COPILOT_GITHUB_TOKEN || '' }}
+        run: node "$FACTORY_ROOT/dist/agent.js" turn 3
+
+      - name: Checks, round 3
+        if: always() && fromJSON(inputs.agent-job).turns >= 3
+        env:
+          FACTORY_CHECK_ENV: ${{ secrets.FACTORY_CHECK_ENV }}
+        run: node "$FACTORY_ROOT/dist/agent.js" checks 3
+
+      - name: Agent, round 4
+        if: always() && fromJSON(inputs.agent-job).turns >= 4
+        timeout-minutes: ${{ fromJSON(inputs.agent-job).stepTimeout }}
+        env:
+          FACTORY_TOKEN: ${{ inputs.codex-pool && secrets.FACTORY_TOKEN || '' }}
+          ANTHROPIC_API_KEY: ${{ env.AGENT == 'claude' && secrets.ANTHROPIC_API_KEY || '' }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ env.AGENT == 'claude' && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
+          OPENAI_API_KEY: ${{ env.AGENT == 'codex' && secrets.OPENAI_API_KEY || '' }}
+          CODEX_ACCESS_TOKEN: ${{ env.AGENT == 'codex' && secrets.CODEX_ACCESS_TOKEN || '' }}
+          COPILOT_GITHUB_TOKEN: ${{ env.AGENT == 'copilot' && secrets.COPILOT_GITHUB_TOKEN || '' }}
+        run: node "$FACTORY_ROOT/dist/agent.js" turn 4
+
+      - name: Checks, round 4
+        if: always() && fromJSON(inputs.agent-job).turns >= 4
+        env:
+          FACTORY_CHECK_ENV: ${{ secrets.FACTORY_CHECK_ENV }}
+        run: node "$FACTORY_ROOT/dist/agent.js" checks 4
+
+      - name: Agent, round 5
+        if: always() && fromJSON(inputs.agent-job).turns >= 5
+        timeout-minutes: ${{ fromJSON(inputs.agent-job).stepTimeout }}
+        env:
+          FACTORY_TOKEN: ${{ inputs.codex-pool && secrets.FACTORY_TOKEN || '' }}
+          ANTHROPIC_API_KEY: ${{ env.AGENT == 'claude' && secrets.ANTHROPIC_API_KEY || '' }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ env.AGENT == 'claude' && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
+          OPENAI_API_KEY: ${{ env.AGENT == 'codex' && secrets.OPENAI_API_KEY || '' }}
+          CODEX_ACCESS_TOKEN: ${{ env.AGENT == 'codex' && secrets.CODEX_ACCESS_TOKEN || '' }}
+          COPILOT_GITHUB_TOKEN: ${{ env.AGENT == 'copilot' && secrets.COPILOT_GITHUB_TOKEN || '' }}
+        run: node "$FACTORY_ROOT/dist/agent.js" turn 5
+
+      - name: Checks, round 5
+        if: always() && fromJSON(inputs.agent-job).turns >= 5
+        env:
+          FACTORY_CHECK_ENV: ${{ secrets.FACTORY_CHECK_ENV }}
+        run: node "$FACTORY_ROOT/dist/agent.js" checks 5
+
+      - name: Hand over to the apply job
+        if: always()
+        run: node "$FACTORY_ROOT/dist/agent.js" handoff
+
+      - name: Upload the handoff
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: factory-handoff
+          path: ${{ runner.temp }}/factory/handoff
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Seal the refreshed Codex logins
+        if: always() && inputs.codex-pool
+        env:
+          CODEX_POOL_TRANSPORT_PUBLIC_KEY: ${{ vars.CODEX_POOL_TRANSPORT_PUBLIC_KEY }}
+        run: node "$FACTORY_ROOT/dist/agent.js" pool-handoff
+
+      - name: Upload the sealed logins
+        if: always() && inputs.codex-pool
+        uses: actions/upload-artifact@v4
+        with:
+          name: factory-pool-handoff
+          path: ${{ runner.temp }}/factory/pool-handoff
+          retention-days: 1
+          if-no-files-found: ignore

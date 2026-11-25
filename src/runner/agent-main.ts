@@ -3,6 +3,9 @@ import { appendFileSync } from "node:fs";
 import { join } from "node:path";
 import { ADAPTERS } from "../agents/index.js";
 import { gitFetcher } from "../config/fetch.js";
+import { capture, type LeaseDeps, poolRun, sealHandoff } from "../pool/lease-run.js";
+import { sealBox } from "../pool/seal.js";
+import { gitHubPoolStore } from "../pool/store.js";
 import { loadConfig } from "../config/load.js";
 import { gitHubApi } from "../router/github.js";
 import type { Decision } from "../router/route.js";
@@ -32,6 +35,26 @@ async function main(): Promise<void> {
       log: (line) => console.log(line),
     });
     if (!ok) process.exitCode = 1;
+    return;
+  }
+  // The Codex ChatGPT-login pool (§6): a lease deps object for the private folder outside the checkout.
+  const leaseDeps = (): LeaseDeps => {
+    const [poolOwner, poolRepo] = required("GITHUB_REPOSITORY").split("/");
+    return {
+      dir: join(required("RUNNER_TEMP"), "factory-pool"),
+      owner: { runId: required("GITHUB_RUN_ID"), attempt: Number(env("GITHUB_RUN_ATTEMPT") ?? 1) },
+      store: () => gitHubPoolStore(required("FACTORY_TOKEN"), poolOwner, poolRepo, env("GITHUB_API_URL")),
+      log: (line) => console.log(line),
+    };
+  };
+  if (step === "pool-capture") {
+    // This step alone sees the whole set of logins (and FACTORY_TOKEN, to lease): the agent step gets one login's path.
+    const leases = await capture(leaseDeps(), process.env, Boolean(env("OPENAI_API_KEY") || env("CODEX_ACCESS_TOKEN")));
+    console.log(leases.current ? `leased the Codex login "${leases.current}"` : leases.unavailable ? `no Codex login leased: ${leases.unavailable}` : "no login leased: an API key or access token is set");
+    return;
+  }
+  if (step === "pool-handoff") {
+    await sealHandoff(leaseDeps(), env("CODEX_POOL_TRANSPORT_PUBLIC_KEY"), join(required("RUNNER_TEMP"), "factory", "pool-handoff"), sealBox);
     return;
   }
   const decision = JSON.parse(required("DECISION")) as Decision;
@@ -77,6 +100,7 @@ async function main(): Promise<void> {
     },
     log: (line) => console.log(line),
     env: process.env,
+    pool: poolRun(leaseDeps()),
   };
 
   switch (step) {

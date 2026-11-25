@@ -40,7 +40,7 @@ function io(overrides: Partial<RouterIO> = {}): RouterIO {
     clientRoot: tree({ "factory.yml": "schemaVersion: 1\noperatorIssue: 1\n" }),
     factoryRoot: tree({ "templates/default/template.yml": template, "package.json": '{"version":"1.2.0"}' }),
     cacheDir: tree({}),
-    stubVersion: "1.0.0",
+    stubVersion: "1.1.0",
     factoryToken: "factory-token",
     githubToken: "github-token",
     api: gh.api,
@@ -85,6 +85,23 @@ describe("runRouter", () => {
     expect(gh.calls("createLabel").map((w) => (w.args as { name: string }).name).sort()).toEqual(["agent:blocked", "agent:implement", "agent:review"]);
     expect(gh.calls("removeLabel")).toEqual([{ token: "factory-token", call: "removeLabel", args: { number: 42, name: "agent:implement" } }]);
     expect(gh.writes.every((w) => w.token === "factory-token")).toBe(true);
+  });
+
+  it("sets the codex-pool output only for a Codex task with an enrolled login", async () => {
+    await runRouter(io({ poolEnrolled: async () => true }));
+    expect(outputs["codex-pool"]).toBe("false"); // the default template's agent is claude
+
+    outputs = {};
+    await runRouter(io({ poolEnrolled: async () => true, clientRoot: tree({ "factory.yml": "schemaVersion: 1\noperatorIssue: 1\nagent: codex\n" }) }));
+    expect(outputs["codex-pool"]).toBe("true");
+
+    outputs = {};
+    await runRouter(io({ poolEnrolled: async () => false, clientRoot: tree({ "factory.yml": "schemaVersion: 1\noperatorIssue: 1\nagent: codex\n" }) }));
+    expect(outputs["codex-pool"]).toBe("false");
+
+    outputs = {};
+    await runRouter(io({ poolEnrolled: async () => { throw new Error("boom"); }, clientRoot: tree({ "factory.yml": "schemaVersion: 1\noperatorIssue: 1\nagent: codex\n" }) }));
+    expect(outputs["codex-pool"]).toBe("false");
   });
 
   it("starts the run summary: the linked subject, task, template, factory version and agent", async () => {
@@ -338,7 +355,7 @@ describe("runRouter", () => {
       expect(text).toContain("| ✅ | Config | validates; layers: template default → factory.yml |");
       expect(text).toContain("| ✅ | Token: push branches | allowed |");
       expect(text).toContain("| ✅ | Labels |");
-      expect(text).toContain("| ✅ | Stub version | v1.0.0, current |");
+      expect(text).toContain("| ✅ | Stub version | v1.1.0, current |");
       expect(JSON.parse(outputs["doctor-agents"])).toEqual([{ agent: "claude", cliVersion: "2.1.319" }]);
       expect(gh.calls("createLabel").length).toBeGreaterThan(0);
     });
@@ -361,7 +378,7 @@ describe("runRouter", () => {
 
       expect(text).toContain("| ❌ | Config | `agent` (factory.yml): must be one of");
       expect(text).toContain("| ❌ | `FACTORY_TOKEN` | not set");
-      expect(text).toContain("| ❌ | Stub version | v0.9.0; the current stub is v1.0.0");
+      expect(text).toContain("| ❌ | Stub version | v0.9.0; the current stub is v1.1.0");
       expect(JSON.parse(outputs["doctor-agents"])).toEqual([]);
     });
 

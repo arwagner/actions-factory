@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { appendFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { gitHubPoolStore } from "../pool/store.js";
 import { gitHubApi } from "./github.js";
 import { runRouter } from "./run.js";
 
@@ -25,6 +26,9 @@ async function main(): Promise<void> {
     factoryToken: env("FACTORY_TOKEN"),
     githubToken: required("GITHUB_TOKEN"),
     api: (token) => gitHubApi(token, owner, repo, env("GITHUB_API_URL")),
+    poolEnrolled: env("FACTORY_TOKEN")
+      ? async () => Object.keys((await gitHubPoolStore(env("FACTORY_TOKEN")!, owner, repo, env("GITHUB_API_URL")).read()).state.accounts).length > 0
+      : undefined,
     runId: Number(env("GITHUB_RUN_ID")) || undefined,
     runUrl: `${env("GITHUB_SERVER_URL")}/${owner}/${repo}/actions/runs/${env("GITHUB_RUN_ID")}`,
     summary: (markdown) => appendFileSync(required("GITHUB_STEP_SUMMARY"), `${markdown}\n`),

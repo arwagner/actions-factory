@@ -14850,6 +14850,56 @@ import { randomUUID } from "node:crypto";
 import { appendFileSync, readFileSync as readFileSync3 } from "node:fs";
 import { join as join4 } from "node:path";
 
+// src/pool/pool.ts
+var STATE_BRANCH = "factory-auth-state";
+var STATE_FILE = "pool.json";
+function emptyState() {
+  return { version: 1, accounts: {} };
+}
+
+// src/pool/store.ts
+function gitHubPoolStore(token, owner, repo, baseUrl = "https://api.github.com") {
+  const call = async (method, path, body, okStatuses = []) => {
+    const response = await fetch(`${baseUrl}/repos/${owner}/${repo}${path}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "actions-factory"
+      },
+      body: body === void 0 ? void 0 : JSON.stringify(body)
+    });
+    if (!response.ok && !okStatuses.includes(response.status)) {
+      throw new Error(`GitHub ${method} ${path} failed: ${response.status} ${await response.text()}`);
+    }
+    return { status: response.status, json: response.ok ? await response.json() : void 0 };
+  };
+  return {
+    async read() {
+      const ref = await call("GET", `/git/ref/heads/${STATE_BRANCH}`, void 0, [404]);
+      if (ref.status === 404) return { state: emptyState(), token: void 0 };
+      const head = ref.json.object.sha;
+      const file = await call("GET", `/contents/${STATE_FILE}?ref=${head}`, void 0, [404]);
+      if (file.status === 404) return { state: emptyState(), token: head };
+      const content = file.json.content;
+      return { state: JSON.parse(Buffer.from(content, "base64").toString("utf8")), token: head };
+    },
+    async write(state, expected) {
+      const blob = (await call("POST", "/git/blobs", { content: `${JSON.stringify(state, null, 2)}
+`, encoding: "utf-8" })).json;
+      const tree = (await call("POST", "/git/trees", { tree: [{ path: STATE_FILE, mode: "100644", type: "blob", sha: blob.sha }] })).json;
+      const commit = (await call("POST", "/git/commits", {
+        message: "factory: update auth pool state",
+        tree: tree.sha,
+        parents: expected ? [expected] : []
+      })).json;
+      const result = expected === void 0 ? await call("POST", "/git/refs", { ref: `refs/heads/${STATE_BRANCH}`, sha: commit.sha }, [422]) : await call("PATCH", `/git/refs/heads/${STATE_BRANCH}`, { sha: commit.sha, force: false }, [422]);
+      return result.status !== 422;
+    }
+  };
+}
+
 // src/router/github.ts
 function gitHubApi(token, owner, repo, baseUrl = "https://api.github.com") {
   const call = async (method, path, body, okStatuses = []) => {
@@ -16186,7 +16236,7 @@ function startOfDay(now, timeZone) {
 }
 
 // src/router/version.ts
-var STUB_VERSION = "1.0.0";
+var STUB_VERSION = "1.1.0";
 var MIN_STUB_VERSION = "1.0.0";
 
 // src/router/doctor.ts
@@ -16393,7 +16443,9 @@ async function runRouter(io) {
   io.setOutput("decision", JSON.stringify(decision));
   if (decision.kind === "run") {
     io.setOutput("task", decision.task);
-    io.setOutput("agent-job", JSON.stringify(agentJobSettings(loaded.config, decision.task)));
+    const settings = agentJobSettings(loaded.config, decision.task);
+    io.setOutput("agent-job", JSON.stringify(settings));
+    io.setOutput("codex-pool", String(settings.agent === "codex" && await codexPoolOn(io)));
     if (decision.subject.kind === "pr") {
       const pull = await reader.pullInfo(decision.subject.number);
       io.setOutput("head-sha", pull.headSha);
@@ -16573,6 +16625,15 @@ function factoryVersion(factoryRoot) {
     return "0.0.0";
   }
 }
+async function codexPoolOn(io) {
+  if (!io.poolEnrolled) return false;
+  try {
+    return await io.poolEnrolled();
+  } catch (error) {
+    console.log(`::warning::couldn't read the Codex login pool, so the pool mode is off for this run: ${error instanceof Error ? error.message : String(error)}`);
+    return false;
+  }
+}
 
 // src/router/main.ts
 async function main() {
@@ -16595,6 +16656,7 @@ async function main() {
     factoryToken: env("FACTORY_TOKEN"),
     githubToken: required("GITHUB_TOKEN"),
     api: (token) => gitHubApi(token, owner, repo, env("GITHUB_API_URL")),
+    poolEnrolled: env("FACTORY_TOKEN") ? async () => Object.keys((await gitHubPoolStore(env("FACTORY_TOKEN"), owner, repo, env("GITHUB_API_URL")).read()).state.accounts).length > 0 : void 0,
     runId: Number(env("GITHUB_RUN_ID")) || void 0,
     runUrl: `${env("GITHUB_SERVER_URL")}/${owner}/${repo}/actions/runs/${env("GITHUB_RUN_ID")}`,
     summary: (markdown) => appendFileSync(required("GITHUB_STEP_SUMMARY"), `${markdown}

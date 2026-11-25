@@ -19,3 +19,12 @@ export async function transportKeyPair(): Promise<{ publicKey: string; privateKe
     privateKey: sodium.to_base64(pair.privateKey, sodium.base64_variants.ORIGINAL),
   };
 }
+
+/** Opens a sealed box with the transport private key (base64); the public half is derived from it. Throws if it doesn't open. */
+export async function openBox(sealedBase64: string, privateKeyBase64: string): Promise<string> {
+  await sodium.ready;
+  const secret = sodium.from_base64(privateKeyBase64, sodium.base64_variants.ORIGINAL);
+  const publicKey = sodium.crypto_scalarmult_base(secret);
+  const opened = sodium.crypto_box_seal_open(sodium.from_base64(sealedBase64, sodium.base64_variants.ORIGINAL), publicKey, secret);
+  return sodium.to_string(opened);
+}
