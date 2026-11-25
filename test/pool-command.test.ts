@@ -22,19 +22,22 @@ class MemoryStore implements PoolStore {
 
 function fakeGitHub(over: Partial<PoolGitHub> = {}) {
   const secrets = new Map<string, string>();
+  const repositorySecrets = new Map<string, string>();
   const variables = new Map<string, string>();
   const github: PoolGitHub = {
     repoExists: async () => true,
     environment: async () => ({ selectedBranches: true }),
     environmentKey: async () => ({ keyId: "k1", key: "pub" }),
     putEnvironmentSecret: async (_env, name, enc) => void secrets.set(name, enc.value),
-    listEnvironmentSecrets: async () => [...secrets.keys()],
+    repositoryKey: async () => ({ keyId: "k2", key: "repo-pub" }),
+    hasRepositorySecret: async (name) => repositorySecrets.has(name),
+    putRepositorySecret: async (name, enc) => void repositorySecrets.set(name, enc.value),
     getVariable: async (name) => variables.get(name),
     setVariable: async (name, value) => void variables.set(name, value),
     runEnded: async () => false,
     ...over,
   };
-  return { github, secrets, variables };
+  return { github, secrets, repositorySecrets, variables };
 }
 
 const seal = async (plaintext: string) => `sealed:${plaintext}`;
@@ -44,10 +47,11 @@ const deps = (store: PoolStore, github: PoolGitHub): PoolDeps => ({ github, stor
 describe("init", () => {
   it("creates the state branch and the transport key pair", async () => {
     const store = new MemoryStore(emptyState(), false);
-    const { github, secrets, variables } = fakeGitHub();
+    const { github, secrets, repositorySecrets, variables } = fakeGitHub();
     expect(await init(deps(store, github))).toEqual({ stateBranchCreated: true, transportKeyCreated: true });
     expect(store.version).toBe(0);
-    expect(secrets.get("CODEX_POOL_TRANSPORT_PRIVATE_KEY")).toMatch(/^sealed:/);
+    expect(repositorySecrets.get("CODEX_POOL_TRANSPORT_PRIVATE_KEY")).toMatch(/^sealed:/);
+    expect(secrets.has("CODEX_POOL_TRANSPORT_PRIVATE_KEY")).toBe(false);
     expect(variables.get("CODEX_POOL_TRANSPORT_PUBLIC_KEY")).toBeTruthy();
   });
 

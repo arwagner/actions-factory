@@ -15950,7 +15950,7 @@ function subjectFor(task, item) {
 }
 
 // src/router/version.ts
-var STUB_VERSION = "1.0.0";
+var STUB_VERSION = "1.1.0";
 var MIN_STUB_VERSION = "1.0.0";
 
 // src/router/github.ts

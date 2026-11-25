@@ -40,15 +40,15 @@ describe("the stub", () => {
   });
 
   it("passes every secret in spec section 2 by name, and nothing else", () => {
-    const names = ["FACTORY_TOKEN", "FACTORY_CHECK_ENV", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "OPENAI_API_KEY", "CODEX_ACCESS_TOKEN", "COPILOT_GITHUB_TOKEN"];
+    const names = ["FACTORY_TOKEN", "FACTORY_CHECK_ENV", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "OPENAI_API_KEY", "CODEX_ACCESS_TOKEN", "CODEX_POOL_TOKEN", "CODEX_POOL_TRANSPORT_PRIVATE_KEY", "COPILOT_GITHUB_TOKEN"];
     expect(job.secrets).toEqual(Object.fromEntries(names.map((n) => [n, `\${{ secrets.${n} }}`])));
   });
 
-  it("is what this repo dog-foods, pinned @latest and otherwise unchanged", () => {
+  it("keeps dog-food on the released stub until the pool inputs ship", () => {
     const dogFood = readFileSync(new URL("../.github/workflows/factory.yml", import.meta.url), "utf8");
 
     expect(dogFood.replace("router.yml@latest", "router.yml@v1").split("\n").filter((l) => !l.trim().startsWith("#"))).toEqual(
-      text.split("\n").filter((l) => !l.trim().startsWith("#")),
+      text.replace("stub-version: 1.1.0", "stub-version: 1.0.0").split("\n").filter((l) => !l.trim().startsWith("#") && !l.includes("CODEX_POOL_")),
     );
   });
 });

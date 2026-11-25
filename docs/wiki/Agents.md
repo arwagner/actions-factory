@@ -33,7 +33,7 @@ node dist/pool.js --repo you/your-repo check
 node dist/pool.js --repo you/your-repo recover [--force SESSION]
 ```
 
-1. **Enrollment.** Create the `codex-pool` environment in the repo's settings and limit its deployment branches to selected branches. Then `init` checks both, creates the `factory-auth-state` branch if it is missing, and makes the transport key pair: the public key goes in the repository variable `CODEX_POOL_TRANSPORT_PUBLIC_KEY` (the agent job reads it) and the private key in the `codex-pool` secret `CODEX_POOL_TRANSPORT_PRIVATE_KEY`. Rerunning `init` keeps an existing pair.
+1. **Enrollment.** Create the `codex-pool` environment in the repo's settings and limit its deployment branches to selected branches. Then `init` checks both, creates the `factory-auth-state` branch if it is missing, and makes the transport key pair: the public key goes in the repository variable `CODEX_POOL_TRANSPORT_PUBLIC_KEY` (the agent job reads it) and the private key in the repository secret `CODEX_POOL_TRANSPORT_PRIVATE_KEY`. Rerunning `init` keeps an existing pair. The enrollment token needs repository Secrets write to store the private key. Keep the private key and the write-back token out of the `codex-pool` environment.
 2. **Seeding.** Make each login fresh, never from a copied local `auth.json`:
 
    ```sh

@@ -26,6 +26,7 @@ A label added with `FACTORY_TOKEN` starts workflows. So a task hands off by addi
 | `FACTORY_CHECK_ENV` | check steps only; dotenv format, one `NAME=value` per line |
 | `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` | the Claude adapter |
 | `OPENAI_API_KEY`, `CODEX_ACCESS_TOKEN` | the Codex adapter |
+| `CODEX_POOL_TRANSPORT_PRIVATE_KEY` | the saving job only: opens the sealed Codex login handoff |
 | `CODEX_POOL_TOKEN` | the saving job of the Codex ChatGPT-login mode only (section 6): a client-owned token limited to environment secrets, never in the agent job |
 | `COPILOT_GITHUB_TOKEN` | the Copilot adapter (a token with only Copilot Requests, never `FACTORY_TOKEN`) |
 

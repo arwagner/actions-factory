@@ -23,7 +23,7 @@ In the repo's **Settings → Secrets and variables → Actions**, add:
 Copy the stub to `.github/workflows/factory.yml`, unchanged:
 
 ```yaml
-# actions-factory stub v1.0.0
+# actions-factory stub v1.1.0
 # Copy this file to .github/workflows/factory.yml on your default branch. Don't edit it:
 # behaviour lives in factory.yml. To update, copy a newer stub over it.
 name: factory
@@ -60,7 +60,7 @@ jobs:
       pull-requests: write
       actions: read
     with:
-      stub-version: 1.0.0
+      stub-version: 1.1.0
     secrets:
       FACTORY_TOKEN: ${{ secrets.FACTORY_TOKEN }}
       FACTORY_CHECK_ENV: ${{ secrets.FACTORY_CHECK_ENV }}
@@ -68,6 +68,8 @@ jobs:
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       CODEX_ACCESS_TOKEN: ${{ secrets.CODEX_ACCESS_TOKEN }}
+      CODEX_POOL_TOKEN: ${{ secrets.CODEX_POOL_TOKEN }}
+      CODEX_POOL_TRANSPORT_PRIVATE_KEY: ${{ secrets.CODEX_POOL_TRANSPORT_PRIVATE_KEY }}
       COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
 ```
 

@@ -3532,13 +3532,12 @@ async function init({ github, store, seal }) {
   if (stateBranchCreated && !await store.write(snapshot.state, void 0)) {
     return init({ github, store, seal });
   }
-  const secrets = await github.listEnvironmentSecrets(POOL_ENVIRONMENT);
   const published = await github.getVariable(TRANSPORT_PUBLIC_VARIABLE);
-  const hasPrivate = secrets.includes(TRANSPORT_PRIVATE_SECRET);
+  const hasPrivate = await github.hasRepositorySecret(TRANSPORT_PRIVATE_SECRET);
   if (published && hasPrivate) return { stateBranchCreated, transportKeyCreated: false };
   const pair = await transportKeyPair();
-  const key = await github.environmentKey(POOL_ENVIRONMENT);
-  await github.putEnvironmentSecret(POOL_ENVIRONMENT, TRANSPORT_PRIVATE_SECRET, { keyId: key.keyId, value: await seal(pair.privateKey, key.key) });
+  const key = await github.repositoryKey();
+  await github.putRepositorySecret(TRANSPORT_PRIVATE_SECRET, { keyId: key.keyId, value: await seal(pair.privateKey, key.key) });
   await github.setVariable(TRANSPORT_PUBLIC_VARIABLE, pair.publicKey);
   return { stateBranchCreated, transportKeyCreated: true };
 }
@@ -3640,14 +3639,15 @@ function poolGitHub(token, owner, repo, baseUrl = "https://api.github.com") {
     async putEnvironmentSecret(name, secret, encrypted) {
       await call("PUT", `${env(name)}/secrets/${encodeURIComponent(secret)}`, { encrypted_value: encrypted.value, key_id: encrypted.keyId });
     },
-    async listEnvironmentSecrets(name) {
-      const names = [];
-      for (let page = 1; ; page++) {
-        const { json } = await call("GET", `${env(name)}/secrets?per_page=100&page=${page}`);
-        const batch = json.secrets.map((s2) => s2.name);
-        names.push(...batch);
-        if (batch.length < 100) return names;
-      }
+    async repositoryKey() {
+      const key = (await call("GET", `${repoPath}/actions/secrets/public-key`)).json;
+      return { keyId: key.key_id, key: key.key };
+    },
+    async hasRepositorySecret(name) {
+      return (await call("GET", `${repoPath}/actions/secrets/${encodeURIComponent(name)}`, void 0, [404])).status === 200;
+    },
+    async putRepositorySecret(name, secret) {
+      await call("PUT", `${repoPath}/actions/secrets/${encodeURIComponent(name)}`, { encrypted_value: secret.value, key_id: secret.keyId });
     },
     async getVariable(name) {
       const found = await call("GET", `${repoPath}/actions/variables/${encodeURIComponent(name)}`, void 0, [404]);

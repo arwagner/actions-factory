@@ -3,11 +3,11 @@ import type { PoolGitHub } from "./github.js";
 import { credentialHash, quarantine, recover, update, type Account, type PoolStore, type RecoverReport } from "./pool.js";
 import { transportKeyPair, type Seal } from "./seal.js";
 
-/** The environment holding the logins and the transport private key. */
+/** The environment holding the logins. */
 export const POOL_ENVIRONMENT = "codex-pool";
 /** The repository variable the agent job reads the transport public key from. */
 export const TRANSPORT_PUBLIC_VARIABLE = "CODEX_POOL_TRANSPORT_PUBLIC_KEY";
-/** The `codex-pool` secret holding the transport private key. */
+/** The repository secret passed only to the save-back job. */
 export const TRANSPORT_PRIVATE_SECRET = "CODEX_POOL_TRANSPORT_PRIVATE_KEY";
 
 const NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
@@ -46,15 +46,14 @@ export async function init({ github, store, seal }: PoolDeps): Promise<InitResul
     return init({ github, store, seal });
   }
 
-  const secrets = await github.listEnvironmentSecrets(POOL_ENVIRONMENT);
   const published = await github.getVariable(TRANSPORT_PUBLIC_VARIABLE);
-  const hasPrivate = secrets.includes(TRANSPORT_PRIVATE_SECRET);
+  const hasPrivate = await github.hasRepositorySecret(TRANSPORT_PRIVATE_SECRET);
   if (published && hasPrivate) return { stateBranchCreated, transportKeyCreated: false };
 
   const pair = await transportKeyPair();
-  const key = await github.environmentKey(POOL_ENVIRONMENT);
+  const key = await github.repositoryKey();
   // Private half first: a public key must never be published without its private half stored.
-  await github.putEnvironmentSecret(POOL_ENVIRONMENT, TRANSPORT_PRIVATE_SECRET, { keyId: key.keyId, value: await seal(pair.privateKey, key.key) });
+  await github.putRepositorySecret(TRANSPORT_PRIVATE_SECRET, { keyId: key.keyId, value: await seal(pair.privateKey, key.key) });
   await github.setVariable(TRANSPORT_PUBLIC_VARIABLE, pair.publicKey);
   return { stateBranchCreated, transportKeyCreated: true };
 }
