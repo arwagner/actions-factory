@@ -89,6 +89,22 @@ describe("the agent job", () => {
     expect(git(io.checkout, "bundle", "list-heads", bundle)).toContain("refs/heads/factory-work");
   });
 
+  it("puts only routed batch items into the prompt and the handoff", async () => {
+    const io = setup({});
+    io.subject = { kind: "batch", query: "label:agent:explore", numbers: [42] };
+    gh.search = [
+      { number: 42, title: "Add a widget", body: "Please." },
+      { number: 88, title: "Unapproved newcomer", body: "Never pass this to the model." },
+    ];
+
+    await prepare(io);
+    await handoff(io);
+
+    expect(prompt(io)).toContain("Add a widget");
+    expect(prompt(io)).not.toContain("Never pass this to the model.");
+    expect(meta(io).batchNumbers).toEqual([42]);
+  });
+
   it("runs the before hook first and puts what it writes to context.md into the prompt", async () => {
     const io = setup({}, { hooks: { before: "/h/before.sh" } });
     io.runHook = async (_path, env) => writeFileSync(join(env.FACTORY_WORK_DIR, "context.md"), "Build ticket #7 next.");

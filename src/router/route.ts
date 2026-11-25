@@ -1,7 +1,7 @@
 /** What one run of a task is about. */
 export type Subject =
   | { kind: "issue" | "pr"; number: number }
-  | { kind: "batch"; query: string; origin?: number }
+  | { kind: "batch"; query: string; origin?: number; numbers?: number[] }
   | { kind: "repo"; origin?: number };
 
 export type Decision = (
@@ -21,6 +21,7 @@ export type RefusalCode =
   | "wrong-subject"
   | "unknown-command"
   | "not-writer"
+  | "pool-author"
   | "loop-brake";
 
 export const COMMANDS = ["doctor", "show-config"] as const;

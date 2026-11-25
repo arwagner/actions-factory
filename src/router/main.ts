@@ -26,6 +26,7 @@ async function main(): Promise<void> {
     factoryToken: env("FACTORY_TOKEN"),
     githubToken: required("GITHUB_TOKEN"),
     api: (token) => gitHubApi(token, owner, repo, env("GITHUB_API_URL")),
+    hasDirectCodexCredential: env("HAS_DIRECT_CODEX_CREDENTIAL") === "true",
     poolEnrolled: env("FACTORY_TOKEN")
       ? async () => Object.keys((await gitHubPoolStore(env("FACTORY_TOKEN")!, owner, repo, env("GITHUB_API_URL")).read()).state.accounts).length > 0
       : undefined,

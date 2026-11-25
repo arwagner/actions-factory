@@ -16,7 +16,7 @@ export interface GitHubApi {
   comment(issueNumber: number, body: string): Promise<void>;
   addLabels(issueNumber: number, names: string[]): Promise<void>;
   listComments(issueNumber: number): Promise<Array<{ id: number; body: string; author: string }>>;
-  getIssue(issueNumber: number): Promise<{ title: string; body: string; isPullRequest: boolean; open: boolean; labels: string[] }>;
+  getIssue(issueNumber: number): Promise<{ title: string; body: string; author: string | undefined; isPullRequest: boolean; open: boolean; labels: string[] }>;
   /** Open issues and PRs carrying `label`, oldest first. */
   listOpenLabeled(label: string): Promise<Array<{ number: number; labels: string[] }>>;
   /** Who last added `label` to the item, from its events; undefined if no event says. */
@@ -122,6 +122,7 @@ export function gitHubApi(token: string, owner: string, repo: string, baseUrl = 
       const issue = (await call("GET", `/issues/${issueNumber}`)) as {
         title: string;
         body: string | null;
+        user?: { login: string } | null;
         pull_request?: unknown;
         state: string;
         labels: Array<{ name: string }>;
@@ -129,6 +130,7 @@ export function gitHubApi(token: string, owner: string, repo: string, baseUrl = 
       return {
         title: issue.title,
         body: issue.body ?? "",
+        author: issue.user?.login,
         isPullRequest: issue.pull_request !== undefined,
         open: issue.state === "open",
         labels: issue.labels.map((l) => l.name),

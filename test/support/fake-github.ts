@@ -5,7 +5,7 @@ export class FakeGitHub {
   labels: Label[] = [];
   permissions: Record<string, string> = {};
   comments: Record<number, Array<{ id: number; body: string; author?: string }>> = {};
-  issues: Record<number, { title: string; body: string; open?: boolean; labels?: string[]; isPullRequest?: boolean }> = {};
+  issues: Record<number, { title: string; body: string; author?: string; open?: boolean; labels?: string[]; isPullRequest?: boolean }> = {};
   /** Who added a label, keyed `number:label`, as the issue events API reports it. */
   labelers: Record<string, string> = {};
   ticks: Array<{ id: number; createdAt: string; conclusion: string | null }> = [];
@@ -48,7 +48,7 @@ export class FakeGitHub {
         structuredClone(this.comments[number] ?? []).map((c) => ({ ...c, author: c.author ?? "factory-bot" })),
       getIssue: async (number) => {
         const issue = this.issues[number] ?? { title: "", body: "" };
-        return { title: issue.title, body: issue.body, isPullRequest: issue.isPullRequest ?? false, open: issue.open ?? true, labels: issue.labels ?? [] };
+        return { title: issue.title, body: issue.body, author: issue.author, isPullRequest: issue.isPullRequest ?? false, open: issue.open ?? true, labels: issue.labels ?? [] };
       },
       listOpenLabeled: async (label) =>
         Object.entries(this.issues)

@@ -55,6 +55,7 @@ function io(overrides: Partial<RouterIO> = {}): RouterIO {
 beforeEach(() => {
   gh = new FakeGitHub();
   gh.permissions = { ana: "write", tri: "read" };
+  gh.issues[42] = { title: "A writer’s ticket", body: "", author: "ana" };
   summary = [];
   outputs = {};
 });
@@ -102,6 +103,77 @@ describe("runRouter", () => {
     outputs = {};
     await runRouter(io({ poolEnrolled: async () => { throw new Error("boom"); }, clientRoot: tree({ "factory.yml": "schemaVersion: 1\noperatorIssue: 1\nagent: codex\n" }) }));
     expect(outputs["codex-pool"]).toBe("false");
+  });
+
+  it("refuses an outsider's issue before a writer's label can start a pool-backed agent", async () => {
+    gh.issues[42] = { title: "Outsider's request", body: "Edited after labeling", author: "tri" };
+    const decision = await runRouter(io({
+      poolEnrolled: async () => true,
+      clientRoot: tree({ "factory.yml": "schemaVersion: 1\nagent: codex\n" }),
+    }));
+
+    expect(decision.kind).toBe("refuse");
+    expect(outputs.task).toBeUndefined();
+    expect(gh.calls("comment")[0]?.args).toMatchObject({ number: 42, body: expect.stringContaining("open a new issue under their own name") });
+    expect(gh.calls("removeLabel").map((write) => write.args)).toEqual([{ number: 42, name: "agent:implement" }]);
+  });
+
+  it.each([["tri", "refuse"], ["ana", "run"]])("checks the original author %s of a same-repo PR in pool mode", async (author, kind) => {
+    gh.issues[7] = { title: "Change", body: "", isPullRequest: true, author };
+    const decision = await runRouter(io({
+      poolEnrolled: async () => true,
+      clientRoot: tree({ "factory.yml": "schemaVersion: 1\nagent: codex\n" }),
+      eventName: "pull_request_target",
+      payload: {
+        action: "labeled",
+        label: { name: "agent:review" },
+        pull_request: { number: 7, head: { repo: { full_name: "o/r" } }, base: { repo: { full_name: "o/r" } } },
+        sender: { login: "ana" },
+      },
+    }));
+
+    expect(decision.kind).toBe(kind);
+    if (kind === "refuse") {
+      expect(outputs.task).toBeUndefined();
+      expect(gh.calls("comment")[0]?.args).toMatchObject({ number: 7, body: expect.stringContaining("open a new pull request") });
+    } else {
+      expect(outputs["head-sha"]).toBe("headsha");
+      expect(outputs["codex-pool"]).toBe("true");
+    }
+  });
+
+  it("drops only the outsider from a pool-backed batch, including its untrusted origin", async () => {
+    gh.issues[42] = { title: "Outside origin", body: "Outsider text", author: "tri" };
+    gh.issues[44] = { title: "Trusted ticket", body: "Writer text", author: "ana" };
+    gh.search = [42, 44].map((number) => ({ number, ...gh.issues[number] }));
+    const decision = await runRouter(io({
+      poolEnrolled: async () => true,
+      clientRoot: tree({ "factory.yml": "schemaVersion: 1\nagent: codex\n" }),
+      factoryRoot: tree({
+        "templates/default/template.yml": template.replace("    subject: issue\n", "    subject: batch\n    query: label:agent:implement\n"),
+        "package.json": '{"version":"1.2.0"}',
+      }),
+    }));
+
+    expect(decision).toMatchObject({ kind: "run", subject: { kind: "batch", numbers: [44] } });
+    expect(JSON.parse(outputs.decision).subject).not.toHaveProperty("origin");
+    expect(gh.calls("comment").map((write) => write.args)).toEqual([
+      { number: 42, body: expect.stringContaining("only runs on items opened by someone with write access") },
+    ]);
+    expect(gh.calls("removeLabel").map((write) => write.args)).toEqual([{ number: 42, name: "agent:implement" }]);
+  });
+
+  it("does not gate outsider authors when an API key or access token overrides the pool", async () => {
+    gh.issues[42] = { title: "Outside request", body: "", author: "tri" };
+    const decision = await runRouter(io({
+      poolEnrolled: async () => true,
+      hasDirectCodexCredential: true,
+      clientRoot: tree({ "factory.yml": "schemaVersion: 1\nagent: codex\n" }),
+    }));
+
+    expect(decision.kind).toBe("run");
+    expect(outputs["codex-pool"]).toBe("false");
+    expect(gh.calls("comment")).toEqual([]);
   });
 
   it("starts the run summary: the linked subject, task, template, factory version and agent", async () => {

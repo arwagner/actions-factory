@@ -19906,6 +19906,7 @@ function gitHubApi(token, owner, repo, baseUrl = "https://api.github.com") {
       return {
         title: issue.title,
         body: issue.body ?? "",
+        author: issue.user?.login,
         isPullRequest: issue.pull_request !== void 0,
         open: issue.state === "open",
         labels: issue.labels.map((l2) => l2.name)
@@ -20415,6 +20416,11 @@ async function gatherSubject(io) {
     case "pr":
       return { items: [await item(io.subject.number, io.subject.kind)] };
     case "batch": {
+      if (io.subject.numbers !== void 0) {
+        const items2 = [];
+        for (const number of io.subject.numbers) items2.push(await item(number, "issue"));
+        return { items: items2, batchNumbers: io.subject.numbers };
+      }
       const found = await api.searchIssues(io.subject.query);
       const items = [];
       for (const issue of found) items.push(await item(issue.number, "issue", issue.title, issue.body));

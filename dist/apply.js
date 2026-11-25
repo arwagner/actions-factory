@@ -19519,6 +19519,7 @@ function gitHubApi(token, owner, repo, baseUrl = "https://api.github.com") {
       return {
         title: issue.title,
         body: issue.body ?? "",
+        author: issue.user?.login,
         isPullRequest: issue.pull_request !== void 0,
         open: issue.state === "open",
         labels: issue.labels.map((l2) => l2.name)

@@ -16013,6 +16013,7 @@ function gitHubApi(token, owner, repo, baseUrl = "https://api.github.com") {
       return {
         title: issue.title,
         body: issue.body ?? "",
+        author: issue.user?.login,
         isPullRequest: issue.pull_request !== void 0,
         open: issue.state === "open",
         labels: issue.labels.map((l) => l.name)
@@ -16705,6 +16706,11 @@ async function runRouter(io) {
       warnings: decision.warnings
     };
   }
+  const trigger = event.payload.label?.name;
+  const codexPool = decision.kind === "run" && !io.hasDirectCodexCredential && agentJobSettings(loaded.config, decision.task).agent === "codex" && await codexPoolOn(io);
+  if (codexPool && decision.kind === "run") {
+    decision = await gatePoolAuthors(decision, { io, loaded, reader, writer, trigger });
+  }
   if (decision.kind === "run" && "number" in decision.subject) {
     decision = await applyLimits(decision, io, loaded, reader);
   }
@@ -16735,7 +16741,6 @@ async function runRouter(io) {
   if (decision.kind === "sweep" && writer) {
     tickReport = await tick({ config: loaded.config, reader, writer, now: io.now ?? /* @__PURE__ */ new Date(), runId: io.runId });
   }
-  const trigger = event.payload.label?.name;
   const assignee = loaded.ok ? loaded.config.assignee : void 0;
   if (decision.kind === "run" && "number" in decision.subject) {
     if (trigger) await writer.removeLabel(decision.subject.number, trigger);
@@ -16757,7 +16762,7 @@ async function runRouter(io) {
     io.setOutput("task", decision.task);
     const settings = agentJobSettings(loaded.config, decision.task);
     io.setOutput("agent-job", JSON.stringify(settings));
-    io.setOutput("codex-pool", String(settings.agent === "codex" && await codexPoolOn(io)));
+    io.setOutput("codex-pool", String(codexPool));
     if (decision.subject.kind === "pr") {
       const pull = await reader.pullInfo(decision.subject.number);
       io.setOutput("head-sha", pull.headSha);
@@ -16771,6 +16776,57 @@ async function runRouter(io) {
     }
   }
   return decision;
+}
+function poolAuthorRefusal(subject, warnings) {
+  const item = subject.kind === "pr" ? "pull request" : "issue";
+  return {
+    kind: "refuse",
+    code: "pool-author",
+    message: `Codex ChatGPT-login mode only runs on items opened by someone with write access. A maintainer can open a new ${item} under their own name.`,
+    subject,
+    warnings
+  };
+}
+async function gatePoolAuthors(decision, ctx) {
+  const { subject, warnings } = decision;
+  const permissions = /* @__PURE__ */ new Map();
+  const check = async (number) => {
+    const { author, isPullRequest } = await ctx.reader.getIssue(number);
+    if (author && !permissions.has(author)) {
+      permissions.set(author, ["admin", "write"].includes(await ctx.reader.permission(author)));
+    }
+    return { allowed: author !== void 0 && permissions.get(author) === true, kind: isPullRequest ? "pr" : "issue" };
+  };
+  if ("number" in subject) {
+    return (await check(subject.number)).allowed ? decision : poolAuthorRefusal(subject, warnings);
+  }
+  if (subject.kind === "repo") {
+    if (subject.origin === void 0) return decision;
+    const { allowed, kind } = await check(subject.origin);
+    return allowed ? decision : poolAuthorRefusal({ kind, number: subject.origin }, warnings);
+  }
+  const found = new Set((await ctx.reader.searchIssues(subject.query)).map((item) => item.number));
+  const candidates = subject.origin === void 0 ? found : /* @__PURE__ */ new Set([...found, subject.origin]);
+  let origin = subject.origin;
+  const numbers = [];
+  for (const number of candidates) {
+    const { allowed, kind } = await check(number);
+    if (allowed) {
+      if (found.has(number)) numbers.push(number);
+    } else {
+      if (number === origin) origin = void 0;
+      await postRefusal(poolAuthorRefusal({ kind, number }, warnings), {
+        ...ctx,
+        trigger: number === subject.origin ? ctx.trigger : void 0
+      });
+    }
+  }
+  if (numbers.length === 0 && (found.size > 0 || origin !== subject.origin)) {
+    const message = "No eligible items remain for this Codex ChatGPT-login batch.";
+    if (origin !== void 0) return { kind: "refuse", code: "pool-author", message, subject: { ...subject, origin }, warnings };
+    return { kind: "ignore", reason: message, warnings };
+  }
+  return { ...decision, subject: { kind: "batch", query: subject.query, numbers, ...origin === void 0 ? {} : { origin } } };
 }
 async function resolveSweptItem(event, reader) {
   const payload = event.payload;
@@ -17722,6 +17778,11 @@ async function gatherSubject(io) {
     case "pr":
       return { items: [await item(io.subject.number, io.subject.kind)] };
     case "batch": {
+      if (io.subject.numbers !== void 0) {
+        const items2 = [];
+        for (const number of io.subject.numbers) items2.push(await item(number, "issue"));
+        return { items: items2, batchNumbers: io.subject.numbers };
+      }
       const found = await api.searchIssues(io.subject.query);
       const items = [];
       for (const issue of found) items.push(await item(issue.number, "issue", issue.title, issue.body));
