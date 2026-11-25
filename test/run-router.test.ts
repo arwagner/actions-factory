@@ -412,6 +412,22 @@ describe("runRouter", () => {
     });
   });
 
+  it("uses the pool doctor instead of sending a prompt with a pooled login", async () => {
+    const calls: string[] = [];
+    const config = tree({ "factory.yml": "schemaVersion: 1\nagent: codex\n" });
+    const diagnostic = { name: "Codex pool: slot-test", ok: false, detail: "quarantined", fix: "Reseed the login." };
+    await runRouter(io({
+      eventName: "workflow_dispatch",
+      payload: { inputs: { command: "doctor" } },
+      clientRoot: config,
+      poolDoctor: async () => [diagnostic],
+      setFailed: (message) => calls.push(message),
+    }));
+    expect(JSON.parse(outputs["doctor-agents"])).toEqual([]);
+    expect(summary.join("\n")).toContain("Codex pool: slot-test | quarantined<br>**Fix:** Reseed the login.");
+    expect(calls).toEqual(["the doctor found 1 problem; see the run summary"]);
+  });
+
   describe("the doctor", () => {
     const doctor = (overrides: Partial<RouterIO> = {}) => {
       const failures: string[] = [];

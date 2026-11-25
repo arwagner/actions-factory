@@ -3581,8 +3581,29 @@ async function seed({ github, store, seal }, alias, sessionId, authJson) {
   });
   return { secret };
 }
+async function remove({ github, store }, alias) {
+  const account = await update(store, (state) => {
+    const login = Object.hasOwn(state.accounts, alias) ? state.accounts[alias] : void 0;
+    if (!login) throw new Error(`no login named "${alias}" in the pool`);
+    if (login.lease) throw new Error(`"${alias}" has an active lease; wait for the owner run to finish`);
+    if (login.quarantine) return { result: login };
+    login.quarantine = { reason: "retired for removal" };
+    return { state, result: login };
+  });
+  await github.deleteEnvironmentSecret(POOL_ENVIRONMENT, authSecretName(account.sessionId));
+  await update(store, (current) => {
+    const login = current.accounts[alias];
+    if (!login?.quarantine || login.lease || login.sessionId !== account.sessionId || login.hash !== account.hash) {
+      throw new Error("the pool changed during removal; check the login before trying again");
+    }
+    delete current.accounts[alias];
+    return { state: current, result: void 0 };
+  });
+}
 async function check(store) {
-  const { state } = await store.read();
+  return loginStatuses((await store.read()).state);
+}
+function loginStatuses(state) {
   return Object.entries(state.accounts).map(([alias, a2]) => {
     const base = { alias, sessionId: a2.sessionId };
     if (a2.quarantine) return { ...base, state: "quarantined", reason: a2.quarantine.reason };
@@ -3634,12 +3655,26 @@ function poolGitHub(token, owner, repo, baseUrl = "https://api.github.com") {
       const policy = found.json.deployment_branch_policy;
       return { selectedBranches: policy?.custom_branch_policies === true };
     },
+    async hasBranchRule(name) {
+      for (let page = 1; ; page++) {
+        const { json } = await call("GET", `${env(name)}/deployment-branch-policies?per_page=100&page=${page}`);
+        const { branch_policies: policies } = json;
+        if (policies.some((policy) => policy.type !== "tag")) return true;
+        if (policies.length < 100) return false;
+      }
+    },
+    async probeEnvironmentSecretWrite(name) {
+      return (await call("PUT", `${env(name)}/secrets/CODEX_POOL_DOCTOR_PROBE`, {}, [400, 401, 403, 404, 409, 422])).status;
+    },
     async environmentKey(name) {
       const key = (await call("GET", `${env(name)}/secrets/public-key`)).json;
       return { keyId: key.key_id, key: key.key };
     },
     async putEnvironmentSecret(name, secret, encrypted) {
       await call("PUT", `${env(name)}/secrets/${encodeURIComponent(secret)}`, { encrypted_value: encrypted.value, key_id: encrypted.keyId });
+    },
+    async deleteEnvironmentSecret(name, secret) {
+      await call("DELETE", `${env(name)}/secrets/${encodeURIComponent(secret)}`, void 0, [404]);
     },
     async repositoryKey() {
       const key = (await call("GET", `${repoPath}/actions/secrets/public-key`)).json;
@@ -3715,6 +3750,7 @@ function gitHubPoolStore(token, owner, repo, baseUrl = "https://api.github.com")
 var USAGE = `usage: pool [--repo owner/repo] <command>
   init
   seed <account> <slot-01..slot-08> <auth.json>
+  remove <account>
   check
   recover [--force SESSION]
 Needs CODEX_POOL_TOKEN. The repo defaults to GITHUB_REPOSITORY.`;
@@ -3751,6 +3787,16 @@ async function main(argv, env, out) {
       }
       const { secret } = await seed(deps, account, session, readFileSync(file, "utf8"));
       out(`stored ${secret} and added "${account}" to the pool`);
+      return 0;
+    }
+    case "remove": {
+      const [account] = rest;
+      if (!account || rest.length !== 1) {
+        out(USAGE);
+        return 2;
+      }
+      await remove(deps, account);
+      out(`removed "${account}" from the pool`);
       return 0;
     }
     case "check": {

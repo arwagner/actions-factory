@@ -6,9 +6,14 @@ export interface PoolGitHub {
   repoExists(): Promise<boolean>;
   /** The environment's deployment-branch rule, or undefined if there is no such environment. */
   environment(name: string): Promise<{ selectedBranches: boolean } | undefined>;
+  /** Whether at least one custom policy targets a branch rather than a tag. */
+  hasBranchRule(name: string): Promise<boolean>;
+  /** Probe a write with invalid input. GitHub returns 422 without creating a secret. */
+  probeEnvironmentSecretWrite(name: string): Promise<number>;
   /** The environment's secret-encryption key. */
   environmentKey(name: string): Promise<{ keyId: string; key: string }>;
   putEnvironmentSecret(name: string, secret: string, encrypted: { keyId: string; value: string }): Promise<void>;
+  deleteEnvironmentSecret(name: string, secret: string): Promise<void>;
   /** The transport private key is stored separately from the login environment. */
   repositoryKey(): Promise<{ keyId: string; key: string }>;
   hasRepositorySecret(name: string): Promise<boolean>;
@@ -51,12 +56,27 @@ export function poolGitHub(token: string, owner: string, repo: string, baseUrl =
       const policy = (found.json as { deployment_branch_policy?: { custom_branch_policies?: boolean } | null }).deployment_branch_policy;
       return { selectedBranches: policy?.custom_branch_policies === true };
     },
+    async hasBranchRule(name) {
+      for (let page = 1; ; page++) {
+        const { json } = await call("GET", `${env(name)}/deployment-branch-policies?per_page=100&page=${page}`);
+        const { branch_policies: policies } = json as { branch_policies: Array<{ type?: string }> };
+        if (policies.some((policy) => policy.type !== "tag")) return true;
+        if (policies.length < 100) return false;
+      }
+    },
+    async probeEnvironmentSecretWrite(name) {
+      // This request cannot create a secret: it has neither a key ID nor encrypted data.
+      return (await call("PUT", `${env(name)}/secrets/CODEX_POOL_DOCTOR_PROBE`, {}, [400, 401, 403, 404, 409, 422])).status;
+    },
     async environmentKey(name) {
       const key = (await call("GET", `${env(name)}/secrets/public-key`)).json as { key_id: string; key: string };
       return { keyId: key.key_id, key: key.key };
     },
     async putEnvironmentSecret(name, secret, encrypted) {
       await call("PUT", `${env(name)}/secrets/${encodeURIComponent(secret)}`, { encrypted_value: encrypted.value, key_id: encrypted.keyId });
+    },
+    async deleteEnvironmentSecret(name, secret) {
+      await call("DELETE", `${env(name)}/secrets/${encodeURIComponent(secret)}`, undefined, [404]);
     },
     async repositoryKey() {
       const key = (await call("GET", `${repoPath}/actions/secrets/public-key`)).json as { key_id: string; key: string };

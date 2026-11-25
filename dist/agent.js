@@ -14847,7 +14847,7 @@ var require__ = __commonJS({
 
 // src/runner/agent-main.ts
 import { spawn as spawn2 } from "node:child_process";
-import { appendFileSync } from "node:fs";
+import { appendFileSync as appendFileSync2 } from "node:fs";
 import { join as join10 } from "node:path";
 
 // src/agents/claude.ts
@@ -18850,7 +18850,9 @@ async function acquire(deps, budgetMs) {
       if (secret === void 0 || credentialHash(secret) !== got.hash) {
         const why = secret === void 0 ? "its secret isn't in the codex-pool environment" : "its secret isn't the generation the pool recorded";
         deps.log?.(`::warning::login "${got.alias}" quarantined: ${why}`);
-        await quarantine(store, { alias: got.alias, reason: `leased by run ${deps.owner.runId}, but ${why}`, owner: deps.owner });
+        if (await quarantine(store, { alias: got.alias, reason: `leased by run ${deps.owner.runId}, but ${why}`, owner: deps.owner })) {
+          deps.report?.({ kind: "quarantined", alias: got.alias });
+        }
         continue;
       }
       const file = readLeases(deps.dir) ?? { owner: deps.owner, leases: [] };
@@ -18880,6 +18882,7 @@ async function capture(deps, secrets, hasOwnCredential) {
   const why = await acquire(deps, Number.POSITIVE_INFINITY);
   const after = readLeases(deps.dir);
   if (why) {
+    deps.report?.({ kind: "exhausted" });
     after.unavailable = why;
     writeLeases(deps.dir, after);
   }
@@ -18901,6 +18904,7 @@ function poolRun(deps) {
       shelve(deps.dir);
       const why = await acquire(deps, budgetMs);
       if (why) {
+        deps.report?.({ kind: "exhausted" });
         const file = readLeases(deps.dir);
         file.unavailable = why;
         writeLeases(deps.dir, file);
@@ -18982,6 +18986,20 @@ function gitHubPoolStore(token, owner, repo, baseUrl = "https://api.github.com")
       return result.status !== 422;
     }
   };
+}
+
+// src/pool/summary.ts
+import { appendFileSync } from "node:fs";
+function poolAlias(alias) {
+  return /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(alias) ? alias : "(unrecognized login alias)";
+}
+function renderPoolNotice(notice) {
+  return notice.kind === "quarantined" ? `- Codex pool: login \`${poolAlias(notice.alias)}\` was quarantined.
+` : "- Codex pool exhausted. Check the pool for leased or quarantined logins.\n";
+}
+function addPoolNotice(notice) {
+  const path = process.env.GITHUB_STEP_SUMMARY;
+  if (path) appendFileSync(path, renderPoolNotice(notice));
 }
 
 // src/config/load.ts
@@ -20490,7 +20508,7 @@ async function main() {
       agent: required("AGENT"),
       adapters: ADAPTERS,
       env: process.env,
-      summary: (markdown) => appendFileSync(required("GITHUB_STEP_SUMMARY"), `${markdown}
+      summary: (markdown) => appendFileSync2(required("GITHUB_STEP_SUMMARY"), `${markdown}
 `),
       log: (line) => console.log(line)
     });
@@ -20503,7 +20521,8 @@ async function main() {
       dir: join10(required("RUNNER_TEMP"), "factory-pool"),
       owner: { runId: required("GITHUB_RUN_ID"), attempt: Number(env("GITHUB_RUN_ATTEMPT") ?? 1) },
       store: () => gitHubPoolStore(required("FACTORY_TOKEN"), poolOwner, poolRepo, env("GITHUB_API_URL")),
-      log: (line) => console.log(line)
+      log: (line) => console.log(line),
+      report: addPoolNotice
     };
   };
   if (step === "pool-capture") {

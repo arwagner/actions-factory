@@ -2,10 +2,11 @@
 //
 //   node dist/pool.js [--repo owner/repo] init
 //   node dist/pool.js [--repo owner/repo] seed <account> <slot-01..slot-08> <auth.json>
+//   node dist/pool.js [--repo owner/repo] remove <account>
 //   node dist/pool.js [--repo owner/repo] check
 //   node dist/pool.js [--repo owner/repo] recover [--force SESSION]
 import { readFileSync } from "node:fs";
-import { check, init, recoverPool, seed, type PoolDeps } from "./command.js";
+import { check, init, recoverPool, remove, seed, type PoolDeps } from "./command.js";
 import { poolGitHub } from "./github.js";
 import { sealBox } from "./seal.js";
 import { gitHubPoolStore } from "./store.js";
@@ -13,6 +14,7 @@ import { gitHubPoolStore } from "./store.js";
 const USAGE = `usage: pool [--repo owner/repo] <command>
   init
   seed <account> <slot-01..slot-08> <auth.json>
+  remove <account>
   check
   recover [--force SESSION]
 Needs CODEX_POOL_TOKEN. The repo defaults to GITHUB_REPOSITORY.`;
@@ -51,6 +53,16 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv, out: (line: s
       }
       const { secret } = await seed(deps, account, session, readFileSync(file, "utf8"));
       out(`stored ${secret} and added "${account}" to the pool`);
+      return 0;
+    }
+    case "remove": {
+      const [account] = rest;
+      if (!account || rest.length !== 1) {
+        out(USAGE);
+        return 2;
+      }
+      await remove(deps, account);
+      out(`removed "${account}" from the pool`);
       return 0;
     }
     case "check": {

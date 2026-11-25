@@ -3,6 +3,7 @@ import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { gitFetcher } from "../config/fetch.js";
 import { savePool } from "../pool/save-job.js";
+import { addPoolNotice } from "../pool/summary.js";
 import { loadConfig } from "../config/load.js";
 import { gitHubApi } from "../router/github.js";
 import type { Decision } from "../router/route.js";
@@ -17,7 +18,9 @@ async function main(): Promise<void> {
   if (process.argv[2] === "pool-save") {
     // The Codex pool's saving job: holds CODEX_POOL_TOKEN, runs no agent code and reads no client config.
     const outcomes = await savePool(process.env, (line) => console.log(line));
-    if (outcomes.some((o) => o.result === "quarantined")) {
+    const quarantined = outcomes.filter((outcome) => outcome.result === "quarantined");
+    for (const { alias } of quarantined) addPoolNotice({ kind: "quarantined", alias });
+    if (quarantined.length > 0) {
       console.log("::error title=actions-factory pool::a Codex login was quarantined; run `node dist/pool.js check`");
       process.exitCode = 1;
     }

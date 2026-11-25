@@ -1,6 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { authSecretName } from "./command.js";
+import type { PoolNotice } from "./summary.js";
 import { claim, credentialHash, quarantine, type Owner, type PoolStore } from "./pool.js";
 import type { Seal } from "./seal.js";
 
@@ -51,6 +52,7 @@ export interface LeaseDeps {
   now?: () => number;
   random?: () => number;
   log?: (line: string) => void;
+  report?: (notice: PoolNotice) => void;
 }
 
 const paths = (dir: string) => ({
@@ -102,7 +104,9 @@ async function acquire(deps: LeaseDeps, budgetMs: number): Promise<string | unde
       if (secret === undefined || credentialHash(secret) !== got.hash) {
         const why = secret === undefined ? "its secret isn't in the codex-pool environment" : "its secret isn't the generation the pool recorded";
         deps.log?.(`::warning::login "${got.alias}" quarantined: ${why}`);
-        await quarantine(store, { alias: got.alias, reason: `leased by run ${deps.owner.runId}, but ${why}`, owner: deps.owner });
+        if (await quarantine(store, { alias: got.alias, reason: `leased by run ${deps.owner.runId}, but ${why}`, owner: deps.owner })) {
+          deps.report?.({ kind: "quarantined", alias: got.alias });
+        }
         continue;
       }
       const file = readLeases(deps.dir) ?? { owner: deps.owner, leases: [] };
@@ -139,6 +143,7 @@ export async function capture(deps: LeaseDeps, secrets: Record<string, string | 
   const why = await acquire(deps, Number.POSITIVE_INFINITY);
   const after = readLeases(deps.dir)!;
   if (why) {
+    deps.report?.({ kind: "exhausted" });
     after.unavailable = why;
     writeLeases(deps.dir, after);
   }
@@ -175,6 +180,7 @@ export function poolRun(deps: LeaseDeps): PoolRun | undefined {
       // The set-aside login stays leased to this run until the saving job releases it, so claim can't hand it out again.
       const why = await acquire(deps, budgetMs);
       if (why) {
+        deps.report?.({ kind: "exhausted" });
         const file = readLeases(deps.dir)!;
         file.unavailable = why;
         writeLeases(deps.dir, file);

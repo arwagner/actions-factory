@@ -99,6 +99,8 @@ jobs:
           FACTORY_ROOT: ${{ steps.factory.outputs.root }}
           FACTORY_SHA: ${{ steps.factory.outputs.sha }}
           STUB_VERSION: ${{ inputs.stub-version }}
+          CODEX_POOL_TOKEN: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.command == 'doctor' && secrets.CODEX_POOL_TOKEN || '' }}
+          CODEX_POOL_CONFIGURED: ${{ vars.CODEX_POOL_TRANSPORT_PUBLIC_KEY != '' }}
           HAS_DIRECT_CODEX_CREDENTIAL: ${{ secrets.OPENAI_API_KEY != '' || secrets.CODEX_ACCESS_TOKEN != '' }}
           FACTORY_TOKEN: ${{ secrets.FACTORY_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}

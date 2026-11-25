@@ -14847,7 +14847,7 @@ var require__ = __commonJS({
 
 // src/runner/apply-main.ts
 import { spawn } from "node:child_process";
-import { appendFileSync, existsSync as existsSync5, readFileSync as readFileSync3 } from "node:fs";
+import { appendFileSync as appendFileSync2, existsSync as existsSync5, readFileSync as readFileSync3 } from "node:fs";
 import { join as join4 } from "node:path";
 
 // src/config/fetch.ts
@@ -14919,12 +14919,26 @@ function poolGitHub(token, owner, repo, baseUrl = "https://api.github.com") {
       const policy = found.json.deployment_branch_policy;
       return { selectedBranches: policy?.custom_branch_policies === true };
     },
+    async hasBranchRule(name) {
+      for (let page = 1; ; page++) {
+        const { json } = await call("GET", `${env(name)}/deployment-branch-policies?per_page=100&page=${page}`);
+        const { branch_policies: policies } = json;
+        if (policies.some((policy) => policy.type !== "tag")) return true;
+        if (policies.length < 100) return false;
+      }
+    },
+    async probeEnvironmentSecretWrite(name) {
+      return (await call("PUT", `${env(name)}/secrets/CODEX_POOL_DOCTOR_PROBE`, {}, [400, 401, 403, 404, 409, 422])).status;
+    },
     async environmentKey(name) {
       const key = (await call("GET", `${env(name)}/secrets/public-key`)).json;
       return { keyId: key.key_id, key: key.key };
     },
     async putEnvironmentSecret(name, secret, encrypted) {
       await call("PUT", `${env(name)}/secrets/${encodeURIComponent(secret)}`, { encrypted_value: encrypted.value, key_id: encrypted.keyId });
+    },
+    async deleteEnvironmentSecret(name, secret) {
+      await call("DELETE", `${env(name)}/secrets/${encodeURIComponent(secret)}`, void 0, [404]);
     },
     async repositoryKey() {
       const key = (await call("GET", `${repoPath}/actions/secrets/public-key`)).json;
@@ -18597,6 +18611,20 @@ async function savePool(env, out) {
   return outcomes;
 }
 
+// src/pool/summary.ts
+import { appendFileSync } from "node:fs";
+function poolAlias(alias) {
+  return /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(alias) ? alias : "(unrecognized login alias)";
+}
+function renderPoolNotice(notice) {
+  return notice.kind === "quarantined" ? `- Codex pool: login \`${poolAlias(notice.alias)}\` was quarantined.
+` : "- Codex pool exhausted. Check the pool for leased or quarantined logins.\n";
+}
+function addPoolNotice(notice) {
+  const path = process.env.GITHUB_STEP_SUMMARY;
+  if (path) appendFileSync(path, renderPoolNotice(notice));
+}
+
 // src/config/load.ts
 var import_yaml = __toESM(require_dist(), 1);
 import { existsSync as existsSync3, readFileSync as readFileSync2, statSync } from "node:fs";
@@ -20093,7 +20121,9 @@ function usage(u2) {
 async function main() {
   if (process.argv[2] === "pool-save") {
     const outcomes = await savePool(process.env, (line) => console.log(line));
-    if (outcomes.some((o2) => o2.result === "quarantined")) {
+    const quarantined = outcomes.filter((outcome) => outcome.result === "quarantined");
+    for (const { alias } of quarantined) addPoolNotice({ kind: "quarantined", alias });
+    if (quarantined.length > 0) {
       console.log("::error title=actions-factory pool::a Codex login was quarantined; run `node dist/pool.js check`");
       process.exitCode = 1;
     }
@@ -20147,7 +20177,7 @@ async function main() {
     ),
     runHook: (path, hookEnv) => runHook(path, { ...hookEnv, FACTORY_TOKEN: token, GH_TOKEN: token }, checkout)
   });
-  appendFileSync(required("GITHUB_STEP_SUMMARY"), `${renderApplySummary({ taskName: decision.task, result, meta, runUrl })}
+  appendFileSync2(required("GITHUB_STEP_SUMMARY"), `${renderApplySummary({ taskName: decision.task, result, meta, runUrl })}
 `);
   if (!result.ok) {
     console.log(`::error title=actions-factory::${escape2(result.reason)}`);

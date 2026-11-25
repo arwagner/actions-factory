@@ -25,7 +25,8 @@ This repo's own `factory.yml` is linked as a working example. There's no generat
 - the config validates, and the template stack resolves;
 - the required secrets are present;
 - the token can read the repo, push branches, and write issues and PRs (through the API). Each write is probed with input GitHub rejects, so nothing is written: GitHub answers 403 without the permission and 422 with it. Workflows: write can't be probed this way, so it's only noted when a task sets `allowWorkflowChanges`;
-- the agent credential works (a tiny prompt), in a job per agent that alone holds that agent's credentials;
+- direct agent credentials work (a tiny prompt), in the doctor's agent job;
+- a configured Codex login pool has its environment, a selected branch rule, a state branch and a save-back token allowed to write environment secrets. The doctor shows free, leased and quarantined logins without using one or printing its credential;
 - the labels are created;
 - the stub's version is current.
 

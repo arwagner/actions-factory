@@ -6,6 +6,7 @@ import { capture, cleanup, type LeaseDeps, leasedAuthPath, loginsFrom, type Pool
 import { credentialHash, type PoolState } from "../src/pool/pool.js";
 import { saveBack } from "../src/pool/save-back.js";
 import { openBox, sealBox, transportKeyPair } from "../src/pool/seal.js";
+import { renderPoolNotice } from "../src/pool/summary.js";
 import { MemoryStore } from "./support/memory-store.js";
 import { tree } from "./support/tree.js";
 
@@ -58,9 +59,11 @@ describe("capture", () => {
   it("quarantines a login whose secret isn't the recorded generation, and leases the next one", async () => {
     const { store, secrets } = pool(A, B);
     secrets[authSecretName("s1")] = auth("acct-1", "older");
-    const d = deps(store);
+    const summary: string[] = [];
+    const d = deps(store, { report: (notice) => summary.push(renderPoolNotice(notice)) });
     const file = await capture(d, secrets, false);
     expect(file.current).toBe("b");
+    expect(summary).toEqual(["- Codex pool: login `a` was quarantined.\n"]);
     expect(store.state.accounts.a!.quarantine?.reason).toMatch(/generation/);
   });
 
@@ -69,11 +72,13 @@ describe("capture", () => {
     store.state.accounts.a!.lease = { runId: "other", attempt: 1 };
     let t = 0;
     const slept: number[] = [];
-    const d = deps(store, { waitMs: 60_000, pollMs: 20_000, now: () => t, sleep: async (ms) => { slept.push(ms); t += ms; } });
+    const summary: string[] = [];
+    const d = deps(store, { report: (notice) => summary.push(renderPoolNotice(notice)), waitMs: 60_000, pollMs: 20_000, now: () => t, sleep: async (ms) => { slept.push(ms); t += ms; } });
     const file = await capture(d, secrets, false);
     expect(slept).toEqual([20_000, 20_000, 20_000]);
     expect(file.current).toBeUndefined();
     expect(file.unavailable).toMatch(/in use by another run/);
+    expect(summary).toEqual(["- Codex pool exhausted. Check the pool for leased or quarantined logins.\n"]);
   });
 
   it("takes a login another run frees while it waits", async () => {

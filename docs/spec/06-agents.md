@@ -64,6 +64,8 @@ A client can run Codex on its own ChatGPT subscription logins. This reverses the
 - **The saving job.** A job after the agent job (`apply.js pool-save`) holds `CODEX_POOL_TOKEN` and the transport private key, and runs no agent code. For each login the pool says this run holds, it opens the sealed handoff, checks the refreshed login is for the same account as the stored one and that the stored one is the generation the pool recorded, saves it through the encrypted-secrets API, records the new hash and releases the lease. Anything uncertain quarantines the login: no handoff, a different account, a stale generation, a failed save or release. The set of logins comes from the pool's own state, so a run can't leave one out by omission. `CODEX_POOL_TOKEN` needs only environment secrets write: the lease and hash updates use `FACTORY_TOKEN`.
 - **Quarantine.** A login that fails, or can't be saved back, is quarantined and leaves the pool until a person recovers it.
 
+**Operations.** The manual doctor checks pool setup and reports login states without using a login. Run summaries flag quarantine and exhaustion without printing credentials. The pool command quarantines idle logins before removing them so their slots can be retired or reseeded.
+
 **Why the old line is reversed.** The old objection was a write-back loop needing a token able to write secrets. That token (`CODEX_POOL_TOKEN`) is now the client's own, is never in the agent job, and is limited to environment secrets. It can't reach repo contents, other secrets or workflows.
 
 The author gate and the leak risk are in section 9.

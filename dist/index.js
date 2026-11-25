@@ -16732,7 +16732,10 @@ async function runRouter(io) {
   let checks;
   if (doctor) {
     checks = await doctorChecks({ loaded, writer, stubVersion: io.stubVersion, labelsError });
-    io.setOutput("doctor-agents", JSON.stringify(doctorAgents(loaded)));
+    const agents = doctorAgents(loaded);
+    const pool = !io.hasDirectCodexCredential && agents.some(({ agent }) => agent === "codex") ? await io.poolDoctor?.() : void 0;
+    if (pool) checks.push(...pool);
+    io.setOutput("doctor-agents", JSON.stringify(pool ? agents.filter(({ agent }) => agent !== "codex") : agents));
   }
   let tickReport;
   if (decision.kind === "sweep") {
@@ -16939,7 +16942,7 @@ function summaryFor(decision, loaded, tickReport, checks, details) {
   const title = checks ? `doctor: ${failed ? `${failed} problem${failed === 1 ? "" : "s"}` : "all checks pass"}` : headline(decision);
   const lines = [`### actions-factory: ${title}`, ""];
   if (details) lines.push(details, "");
-  if (checks) lines.push(renderChecks(checks), "", "The agent credentials are checked in the doctor's agent job.", "");
+  if (checks) lines.push(renderChecks(checks), "", "Direct agent credentials are checked in the doctor's agent job. The doctor doesn't use pooled logins.", "");
   if (tickReport) lines.push(tickReport.length > 0 ? tickReport.join("\n") : "Nothing is due or waiting.", "");
   for (const warning of decision.warnings) lines.push(`> [!WARNING]`, `> ${warning}`, "");
   if (decision.kind === "refuse") lines.push(decision.message, "");

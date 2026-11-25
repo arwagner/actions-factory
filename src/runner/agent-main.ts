@@ -6,6 +6,7 @@ import { gitFetcher } from "../config/fetch.js";
 import { capture, type LeaseDeps, poolRun, sealHandoff } from "../pool/lease-run.js";
 import { sealBox } from "../pool/seal.js";
 import { gitHubPoolStore } from "../pool/store.js";
+import { addPoolNotice } from "../pool/summary.js";
 import { loadConfig } from "../config/load.js";
 import { gitHubApi } from "../router/github.js";
 import type { Decision } from "../router/route.js";
@@ -45,6 +46,7 @@ async function main(): Promise<void> {
       owner: { runId: required("GITHUB_RUN_ID"), attempt: Number(env("GITHUB_RUN_ATTEMPT") ?? 1) },
       store: () => gitHubPoolStore(required("FACTORY_TOKEN"), poolOwner, poolRepo, env("GITHUB_API_URL")),
       log: (line) => console.log(line),
+      report: addPoolNotice,
     };
   };
   if (step === "pool-capture") {

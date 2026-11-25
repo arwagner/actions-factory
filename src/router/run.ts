@@ -37,6 +37,8 @@ export interface RouterIO {
    * the pool state. Called only for a run whose agent is Codex.
    */
   poolEnrolled?: () => Promise<boolean>;
+  /** Pool health checks for a manual doctor, if the pool is configured. */
+  poolDoctor?: () => Promise<Check[] | undefined>;
   summary: (markdown: string) => void;
   setOutput: (name: string, value: string) => void;
   /** This run's id, left out of today's run count. */
@@ -117,7 +119,10 @@ export async function runRouter(io: RouterIO): Promise<Decision> {
   let checks: Check[] | undefined;
   if (doctor) {
     checks = await doctorChecks({ loaded, writer, stubVersion: io.stubVersion, labelsError });
-    io.setOutput("doctor-agents", JSON.stringify(doctorAgents(loaded)));
+    const agents = doctorAgents(loaded);
+    const pool = !io.hasDirectCodexCredential && agents.some(({ agent }) => agent === "codex") ? await io.poolDoctor?.() : undefined;
+    if (pool) checks.push(...pool);
+    io.setOutput("doctor-agents", JSON.stringify(pool ? agents.filter(({ agent }) => agent !== "codex") : agents));
   }
 
   let tickReport: string[] | undefined;
@@ -364,7 +369,7 @@ function summaryFor(decision: Decision, loaded: LoadResult, tickReport?: string[
   const title = checks ? `doctor: ${failed ? `${failed} problem${failed === 1 ? "" : "s"}` : "all checks pass"}` : headline(decision);
   const lines = [`### actions-factory: ${title}`, ""];
   if (details) lines.push(details, "");
-  if (checks) lines.push(renderChecks(checks), "", "The agent credentials are checked in the doctor's agent job.", "");
+  if (checks) lines.push(renderChecks(checks), "", "Direct agent credentials are checked in the doctor's agent job. The doctor doesn't use pooled logins.", "");
   if (tickReport) lines.push(tickReport.length > 0 ? tickReport.join("\n") : "Nothing is due or waiting.", "");
   for (const warning of decision.warnings) lines.push(`> [!WARNING]`, `> ${warning}`, "");
   if (decision.kind === "refuse") lines.push(decision.message, "");
