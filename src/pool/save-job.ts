@@ -25,7 +25,7 @@ export async function savePool(env: NodeJS.ProcessEnv, out: (line: string) => vo
     seal: sealBox,
     owner: { runId: required("GITHUB_RUN_ID"), attempt: Number(env.GITHUB_RUN_ATTEMPT ?? 1) },
     handoff: undefined,
-    secrets: JSON.parse(env.CODEX_POOL_SECRETS || "{}") as Record<string, string | undefined>,
+    secrets: env,
   };
   const file = join(required("POOL_HANDOFF_DIR"), POOL_SEALED_FILE);
   if (existsSync(file)) {

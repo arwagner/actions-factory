@@ -3518,6 +3518,7 @@ async function transportKeyPair() {
 var POOL_ENVIRONMENT = "codex-pool";
 var TRANSPORT_PUBLIC_VARIABLE = "CODEX_POOL_TRANSPORT_PUBLIC_KEY";
 var TRANSPORT_PRIVATE_SECRET = "CODEX_POOL_TRANSPORT_PRIVATE_KEY";
+var POOL_SESSIONS = Array.from({ length: 8 }, (_2, i2) => `slot-${String(i2 + 1).padStart(2, "0")}`);
 var NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 var authSecretName = (sessionId) => `CODEX_AUTH_${sessionId.toUpperCase().replace(/-/g, "_")}`;
 async function init({ github, store, seal }) {
@@ -3557,6 +3558,7 @@ async function seed({ github, store, seal }, alias, sessionId, authJson) {
   for (const [what, value] of [["account", alias], ["session", sessionId]]) {
     if (!NAME.test(value)) throw new Error(`the ${what} ID must be letters, digits, "-" and "_" (got "${value}")`);
   }
+  if (!POOL_SESSIONS.includes(sessionId)) throw new Error("session ID must be slot-01 through slot-08");
   const seedHash = sha(refreshToken(authJson));
   const secret = authSecretName(sessionId);
   const refusal = (accounts) => {
@@ -3712,7 +3714,7 @@ function gitHubPoolStore(token, owner, repo, baseUrl = "https://api.github.com")
 // src/pool/cli.ts
 var USAGE = `usage: pool [--repo owner/repo] <command>
   init
-  seed <account> <session> <auth.json>
+  seed <account> <slot-01..slot-08> <auth.json>
   check
   recover [--force SESSION]
 Needs CODEX_POOL_TOKEN. The repo defaults to GITHUB_REPOSITORY.`;

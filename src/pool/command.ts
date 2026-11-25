@@ -10,6 +10,9 @@ export const TRANSPORT_PUBLIC_VARIABLE = "CODEX_POOL_TRANSPORT_PUBLIC_KEY";
 /** The repository secret passed only to the save-back job. */
 export const TRANSPORT_PRIVATE_SECRET = "CODEX_POOL_TRANSPORT_PRIVATE_KEY";
 
+/** GitHub requires explicit secret names at each reusable-workflow boundary. */
+export const POOL_SESSIONS = Array.from({ length: 8 }, (_, i) => `slot-${String(i + 1).padStart(2, "0")}`);
+
 const NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 
 /** The secret that holds a session's login. */
@@ -81,6 +84,7 @@ export async function seed({ github, store, seal }: PoolDeps, alias: string, ses
   for (const [what, value] of [["account", alias], ["session", sessionId]] as const) {
     if (!NAME.test(value)) throw new Error(`the ${what} ID must be letters, digits, "-" and "_" (got "${value}")`);
   }
+  if (!POOL_SESSIONS.includes(sessionId)) throw new Error("session ID must be slot-01 through slot-08");
   const seedHash = sha(refreshToken(authJson));
   const secret = authSecretName(sessionId);
 

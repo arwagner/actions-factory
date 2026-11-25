@@ -18438,6 +18438,7 @@ async function openBox(sealedBase64, privateKeyBase64) {
 
 // src/pool/command.ts
 var POOL_ENVIRONMENT = "codex-pool";
+var POOL_SESSIONS = Array.from({ length: 8 }, (_2, i2) => `slot-${String(i2 + 1).padStart(2, "0")}`);
 var authSecretName = (sessionId) => `CODEX_AUTH_${sessionId.toUpperCase().replace(/-/g, "_")}`;
 
 // src/pool/lease-run.ts
@@ -18580,7 +18581,7 @@ async function savePool(env, out) {
     seal: sealBox,
     owner: { runId: required("GITHUB_RUN_ID"), attempt: Number(env.GITHUB_RUN_ATTEMPT ?? 1) },
     handoff: void 0,
-    secrets: JSON.parse(env.CODEX_POOL_SECRETS || "{}")
+    secrets: env
   };
   const file = join2(required("POOL_HANDOFF_DIR"), POOL_SEALED_FILE);
   if (existsSync2(file)) {

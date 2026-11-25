@@ -1,7 +1,7 @@
 // The pool command, run by a person from a trusted machine with CODEX_POOL_TOKEN:
 //
 //   node dist/pool.js [--repo owner/repo] init
-//   node dist/pool.js [--repo owner/repo] seed <account> <session> <auth.json>
+//   node dist/pool.js [--repo owner/repo] seed <account> <slot-01..slot-08> <auth.json>
 //   node dist/pool.js [--repo owner/repo] check
 //   node dist/pool.js [--repo owner/repo] recover [--force SESSION]
 import { readFileSync } from "node:fs";
@@ -12,7 +12,7 @@ import { gitHubPoolStore } from "./store.js";
 
 const USAGE = `usage: pool [--repo owner/repo] <command>
   init
-  seed <account> <session> <auth.json>
+  seed <account> <slot-01..slot-08> <auth.json>
   check
   recover [--force SESSION]
 Needs CODEX_POOL_TOKEN. The repo defaults to GITHUB_REPOSITORY.`;

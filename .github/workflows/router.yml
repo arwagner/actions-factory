@@ -9,6 +9,22 @@ on:
         type: string
         required: false
     secrets:
+      CODEX_AUTH_SLOT_01:
+        required: false
+      CODEX_AUTH_SLOT_02:
+        required: false
+      CODEX_AUTH_SLOT_03:
+        required: false
+      CODEX_AUTH_SLOT_04:
+        required: false
+      CODEX_AUTH_SLOT_05:
+        required: false
+      CODEX_AUTH_SLOT_06:
+        required: false
+      CODEX_AUTH_SLOT_07:
+        required: false
+      CODEX_AUTH_SLOT_08:
+        required: false
       FACTORY_TOKEN:
         required: false
       FACTORY_CHECK_ENV:
@@ -197,6 +213,14 @@ jobs:
       factory-sha: ${{ needs.route.outputs.factory-sha }}
       codex-pool: ${{ needs.route.outputs.codex-pool == 'true' }}
     secrets:
+      CODEX_AUTH_SLOT_01: ${{ secrets.CODEX_AUTH_SLOT_01 }}
+      CODEX_AUTH_SLOT_02: ${{ secrets.CODEX_AUTH_SLOT_02 }}
+      CODEX_AUTH_SLOT_03: ${{ secrets.CODEX_AUTH_SLOT_03 }}
+      CODEX_AUTH_SLOT_04: ${{ secrets.CODEX_AUTH_SLOT_04 }}
+      CODEX_AUTH_SLOT_05: ${{ secrets.CODEX_AUTH_SLOT_05 }}
+      CODEX_AUTH_SLOT_06: ${{ secrets.CODEX_AUTH_SLOT_06 }}
+      CODEX_AUTH_SLOT_07: ${{ secrets.CODEX_AUTH_SLOT_07 }}
+      CODEX_AUTH_SLOT_08: ${{ secrets.CODEX_AUTH_SLOT_08 }}
       FACTORY_TOKEN: ${{ secrets.FACTORY_TOKEN }}
       FACTORY_CHECK_ENV: ${{ secrets.FACTORY_CHECK_ENV }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -255,7 +279,14 @@ jobs:
           FACTORY_TOKEN: ${{ secrets.FACTORY_TOKEN }}
           CODEX_POOL_TOKEN: ${{ secrets.CODEX_POOL_TOKEN }}
           CODEX_POOL_TRANSPORT_PRIVATE_KEY: ${{ secrets.CODEX_POOL_TRANSPORT_PRIVATE_KEY }}
-          CODEX_POOL_SECRETS: ${{ toJSON(secrets) }}
+          CODEX_AUTH_SLOT_01: ${{ secrets.CODEX_AUTH_SLOT_01 }}
+          CODEX_AUTH_SLOT_02: ${{ secrets.CODEX_AUTH_SLOT_02 }}
+          CODEX_AUTH_SLOT_03: ${{ secrets.CODEX_AUTH_SLOT_03 }}
+          CODEX_AUTH_SLOT_04: ${{ secrets.CODEX_AUTH_SLOT_04 }}
+          CODEX_AUTH_SLOT_05: ${{ secrets.CODEX_AUTH_SLOT_05 }}
+          CODEX_AUTH_SLOT_06: ${{ secrets.CODEX_AUTH_SLOT_06 }}
+          CODEX_AUTH_SLOT_07: ${{ secrets.CODEX_AUTH_SLOT_07 }}
+          CODEX_AUTH_SLOT_08: ${{ secrets.CODEX_AUTH_SLOT_08 }}
         run: node "$FACTORY_ROOT/dist/apply.js" pool-save
 
   # Runs even when the agent job failed, so the item is parked with agent:blocked and a status comment.

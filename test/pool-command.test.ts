@@ -77,28 +77,29 @@ describe("seed", () => {
     const store = new MemoryStore();
     const { github, secrets } = fakeGitHub();
     const text = login("r1");
-    expect(await seed(deps(store, github), "work", "s-1", text)).toEqual({ secret: "CODEX_AUTH_S_1" });
-    expect(secrets.get("CODEX_AUTH_S_1")).toBe(`sealed:${text}`);
-    expect(store.state.accounts.work!.sessionId).toBe("s-1");
+    expect(await seed(deps(store, github), "work", "slot-01", text)).toEqual({ secret: "CODEX_AUTH_SLOT_01" });
+    expect(secrets.get("CODEX_AUTH_SLOT_01")).toBe(`sealed:${text}`);
+    expect(store.state.accounts.work!.sessionId).toBe("slot-01");
     expect(JSON.stringify(store.state)).not.toContain("r1");
   });
 
   it("rejects duplicate IDs and a copied refresh token", async () => {
     const store = new MemoryStore();
     const { github, secrets } = fakeGitHub();
-    await seed(deps(store, github), "work", "s-1", login("r1"));
-    await expect(seed(deps(store, github), "work", "s2", login("r2"))).rejects.toThrow(/already in the pool/);
-    await expect(seed(deps(store, github), "other", "S_1", login("r2"))).rejects.toThrow(/collides/);
-    await expect(seed(deps(store, github), "other", "s2", login("r1"))).rejects.toThrow(/copy/);
-    expect([...secrets.keys()]).toEqual(["CODEX_AUTH_S_1"]);
+    await seed(deps(store, github), "work", "slot-01", login("r1"));
+    await expect(seed(deps(store, github), "work", "slot-02", login("r2"))).rejects.toThrow(/already in the pool/);
+    await expect(seed(deps(store, github), "other", "slot-01", login("r2"))).rejects.toThrow(/collides/);
+    await expect(seed(deps(store, github), "other", "slot-02", login("r1"))).rejects.toThrow(/copy/);
+    expect([...secrets.keys()]).toEqual(["CODEX_AUTH_SLOT_01"]);
   });
 
   it("rejects bad names and files that aren't ChatGPT logins", async () => {
     const d = deps(new MemoryStore(), fakeGitHub().github);
     await expect(seed(d, "a b", "s", login("r"))).rejects.toThrow(/account ID/);
     await expect(seed(d, "a", "../s", login("r"))).rejects.toThrow(/session ID/);
-    await expect(seed(d, "a", "s", "nope")).rejects.toThrow(/valid JSON/);
-    await expect(seed(d, "a", "s", "{}")).rejects.toThrow(/no ChatGPT login/);
+    await expect(seed(d, "a", "slot-09", login("r"))).rejects.toThrow(/slot-01 through slot-08/);
+    await expect(seed(d, "a", "slot-01", "nope")).rejects.toThrow(/valid JSON/);
+    await expect(seed(d, "a", "slot-01", "{}")).rejects.toThrow(/no ChatGPT login/);
   });
 
   it("names the secret from the session", () => {

@@ -49,8 +49,7 @@ async function main(): Promise<void> {
   };
   if (step === "pool-capture") {
     // This step alone sees the whole set of logins (and FACTORY_TOKEN, to lease): the agent step gets one login's path.
-    const secrets = JSON.parse(env("CODEX_POOL_SECRETS") ?? "{}") as Record<string, string | undefined>;
-    const leases = await capture(leaseDeps(), secrets, Boolean(env("OPENAI_API_KEY") || env("CODEX_ACCESS_TOKEN")));
+    const leases = await capture(leaseDeps(), process.env, Boolean(env("OPENAI_API_KEY") || env("CODEX_ACCESS_TOKEN")));
     console.log(leases.current ? `leased the Codex login "${leases.current}"` : leases.unavailable ? `no Codex login leased: ${leases.unavailable}` : "no login leased: an API key or access token is set");
     return;
   }

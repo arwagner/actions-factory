@@ -18810,6 +18810,7 @@ var sealBox = async (plaintext, publicKeyBase64) => {
 };
 
 // src/pool/command.ts
+var POOL_SESSIONS = Array.from({ length: 8 }, (_2, i2) => `slot-${String(i2 + 1).padStart(2, "0")}`);
 var authSecretName = (sessionId) => `CODEX_AUTH_${sessionId.toUpperCase().replace(/-/g, "_")}`;
 
 // src/pool/lease-run.ts
@@ -20500,8 +20501,7 @@ async function main() {
     };
   };
   if (step === "pool-capture") {
-    const secrets = JSON.parse(env("CODEX_POOL_SECRETS") ?? "{}");
-    const leases = await capture(leaseDeps(), secrets, Boolean(env("OPENAI_API_KEY") || env("CODEX_ACCESS_TOKEN")));
+    const leases = await capture(leaseDeps(), process.env, Boolean(env("OPENAI_API_KEY") || env("CODEX_ACCESS_TOKEN")));
     console.log(leases.current ? `leased the Codex login "${leases.current}"` : leases.unavailable ? `no Codex login leased: ${leases.unavailable}` : "no login leased: an API key or access token is set");
     return;
   }

@@ -26,6 +26,22 @@ on:
         type: boolean
         required: true
     secrets:
+      CODEX_AUTH_SLOT_01:
+        required: false
+      CODEX_AUTH_SLOT_02:
+        required: false
+      CODEX_AUTH_SLOT_03:
+        required: false
+      CODEX_AUTH_SLOT_04:
+        required: false
+      CODEX_AUTH_SLOT_05:
+        required: false
+      CODEX_AUTH_SLOT_06:
+        required: false
+      CODEX_AUTH_SLOT_07:
+        required: false
+      CODEX_AUTH_SLOT_08:
+        required: false
       FACTORY_TOKEN:
         required: false
       FACTORY_CHECK_ENV:
@@ -133,7 +149,14 @@ jobs:
         if: inputs.codex-pool && steps.pool-isolation.outcome == 'success'
         env:
           FACTORY_TOKEN: ${{ secrets.FACTORY_TOKEN }}
-          CODEX_POOL_SECRETS: ${{ toJSON(secrets) }}
+          CODEX_AUTH_SLOT_01: ${{ secrets.CODEX_AUTH_SLOT_01 }}
+          CODEX_AUTH_SLOT_02: ${{ secrets.CODEX_AUTH_SLOT_02 }}
+          CODEX_AUTH_SLOT_03: ${{ secrets.CODEX_AUTH_SLOT_03 }}
+          CODEX_AUTH_SLOT_04: ${{ secrets.CODEX_AUTH_SLOT_04 }}
+          CODEX_AUTH_SLOT_05: ${{ secrets.CODEX_AUTH_SLOT_05 }}
+          CODEX_AUTH_SLOT_06: ${{ secrets.CODEX_AUTH_SLOT_06 }}
+          CODEX_AUTH_SLOT_07: ${{ secrets.CODEX_AUTH_SLOT_07 }}
+          CODEX_AUTH_SLOT_08: ${{ secrets.CODEX_AUTH_SLOT_08 }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           CODEX_ACCESS_TOKEN: ${{ secrets.CODEX_ACCESS_TOKEN }}
         run: node "$FACTORY_ROOT/dist/agent.js" pool-capture

@@ -37,6 +37,14 @@ jobs:
     with:
       stub-version: 1.1.0
     secrets:
+      CODEX_AUTH_SLOT_01: ${{ secrets.CODEX_AUTH_SLOT_01 }}
+      CODEX_AUTH_SLOT_02: ${{ secrets.CODEX_AUTH_SLOT_02 }}
+      CODEX_AUTH_SLOT_03: ${{ secrets.CODEX_AUTH_SLOT_03 }}
+      CODEX_AUTH_SLOT_04: ${{ secrets.CODEX_AUTH_SLOT_04 }}
+      CODEX_AUTH_SLOT_05: ${{ secrets.CODEX_AUTH_SLOT_05 }}
+      CODEX_AUTH_SLOT_06: ${{ secrets.CODEX_AUTH_SLOT_06 }}
+      CODEX_AUTH_SLOT_07: ${{ secrets.CODEX_AUTH_SLOT_07 }}
+      CODEX_AUTH_SLOT_08: ${{ secrets.CODEX_AUTH_SLOT_08 }}
       FACTORY_TOKEN: ${{ secrets.FACTORY_TOKEN }}
       FACTORY_CHECK_ENV: ${{ secrets.FACTORY_CHECK_ENV }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

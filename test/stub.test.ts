@@ -1,3 +1,4 @@
+import { POOL_SESSIONS, authSecretName } from "../src/pool/command.js";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
@@ -40,15 +41,36 @@ describe("the stub", () => {
   });
 
   it("passes every secret in spec section 2 by name, and nothing else", () => {
-    const names = ["FACTORY_TOKEN", "FACTORY_CHECK_ENV", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "OPENAI_API_KEY", "CODEX_ACCESS_TOKEN", "CODEX_POOL_TOKEN", "CODEX_POOL_TRANSPORT_PRIVATE_KEY", "COPILOT_GITHUB_TOKEN"];
+    const names = [...POOL_SESSIONS.map(authSecretName), "FACTORY_TOKEN", "FACTORY_CHECK_ENV", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "OPENAI_API_KEY", "CODEX_ACCESS_TOKEN", "CODEX_POOL_TOKEN", "CODEX_POOL_TRANSPORT_PRIVATE_KEY", "COPILOT_GITHUB_TOKEN"];
     expect(job.secrets).toEqual(Object.fromEntries(names.map((n) => [n, `\${{ secrets.${n} }}`])));
+  });
+
+  it("forwards pool slots into both jobs and keeps save-back secrets out of the agent call", () => {
+    const router = parse(readFileSync(new URL("../.github/workflows/router.yml", import.meta.url), "utf8"));
+    const agent = parse(readFileSync(new URL("../.github/workflows/agent.yml", import.meta.url), "utf8"));
+    const capture = agent.jobs.run.steps.find((step: { name?: string }) => step.name === "Lease a Codex login");
+    const save = router.jobs["pool-save"].steps.find((step: { name?: string }) => step.name === "Save the logins back");
+    for (const slot of POOL_SESSIONS.map(authSecretName)) {
+      const value = `\${{ secrets.${slot} }}`;
+      expect(router.on.workflow_call.secrets[slot]).toEqual({ required: false });
+      expect(router.jobs.agent.secrets[slot]).toBe(value);
+      expect(agent.on.workflow_call.secrets[slot]).toEqual({ required: false });
+      expect(capture.env[slot]).toBe(value);
+      expect(save.env[slot]).toBe(value);
+    }
+    for (const name of ["CODEX_POOL_TOKEN", "CODEX_POOL_TRANSPORT_PRIVATE_KEY"]) {
+      expect(router.jobs.agent.secrets).not.toHaveProperty(name);
+      expect(agent.on.workflow_call.secrets).not.toHaveProperty(name);
+      expect(capture.env).not.toHaveProperty(name);
+      expect(save.env).toHaveProperty(name);
+    }
   });
 
   it("keeps dog-food on the released stub until the pool inputs ship", () => {
     const dogFood = readFileSync(new URL("../.github/workflows/factory.yml", import.meta.url), "utf8");
 
     expect(dogFood.replace("router.yml@latest", "router.yml@v1").split("\n").filter((l) => !l.trim().startsWith("#"))).toEqual(
-      text.replace("stub-version: 1.1.0", "stub-version: 1.0.0").split("\n").filter((l) => !l.trim().startsWith("#") && !l.includes("CODEX_POOL_")),
+      text.replace("stub-version: 1.1.0", "stub-version: 1.0.0").split("\n").filter((l) => !l.trim().startsWith("#") && !l.includes("CODEX_POOL_") && !l.includes("CODEX_AUTH_SLOT_")),
     );
   });
 });
